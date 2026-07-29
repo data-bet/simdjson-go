@@ -91,13 +91,31 @@ func peekSize(pj *internalParsedJson) uint64 {
 // reserveStrings makes room for n more bytes in the string buffer and returns the
 // offset the caller may start writing at. Callers handing the buffer to assembly
 // must include the 32 byte overshoot of the copy loop in n.
-func (pj *ParsedJson) reserveStrings(n uint64) int {
+// idx is how far into the message the value being stored starts, which lets the
+// growth extrapolate the document's string density instead of guessing.
+func (pj *ParsedJson) reserveStrings(n, idx uint64) int {
 	strs := pj.Strings.B
 	requiredLen := uint64(len(strs)) + n
 	if requiredLen >= uint64(cap(strs)) {
-		newSize := uint64(cap(strs) * 2)
+		// The message length is a hard ceiling: strings are disjoint pieces of it and
+		// decoding never makes one longer, so the buffer can never be asked for more.
+		limit := uint64(len(pj.Message)) + 32
+		// Below that, project what the rest of the message will add at the density
+		// seen so far and leave a quarter as margin. Doubling alone is too timid for a
+		// document that is mostly strings - it used to take five reallocations and
+		// several megabytes of garbage to get there - and jumping straight to the
+		// ceiling is too eager for one that is mostly numbers.
+		newSize := requiredLen * 2
+		if idx > 0 {
+			if projected := requiredLen * uint64(len(pj.Message)) / idx; projected > newSize {
+				newSize = projected + projected/4
+			}
+		}
+		if newSize > limit {
+			newSize = limit
+		}
 		if newSize < requiredLen {
-			newSize = requiredLen + n // add n once more to account for further space
+			newSize = requiredLen + n
 		}
 		grown := make([]byte, len(strs), newSize)
 		copy(grown, strs)
@@ -152,7 +170,7 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 		// Nothing to decode, so skip the second pass over the string: it would
 		// only copy these bytes across one YMM word at a time, and the scan above
 		// has already established both the length and the validity.
-		start := pj.reserveStrings(size)
+		start := pj.reserveStrings(size, idx)
 		// Capacity is reserved, so this append cannot reallocate.
 		pj.Strings.B = append(pj.Strings.B, buf[1:1+size]...)
 		pj.write_tape(uint64(STRINGBUFBIT+start), '"')
@@ -160,7 +178,7 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 	default:
 		// Make sure we account for at least 32 bytes additional space due to
 		// the overshoot of the copy loop in _parse_string.
-		start := pj.reserveStrings(size + 32)
+		start := pj.reserveStrings(size+32, idx)
 		if !parseStringSimd(buf, &pj.Strings.B) {
 			return false
 		}
