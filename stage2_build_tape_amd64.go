@@ -158,6 +158,11 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 	needCopy := pj.copyStrings
 	size := uint64(0)
 	buf := pj.Message[idx:]
+	// A non-zero bound is one stage 1 actually gave us, which says more than its
+	// value: the next structural character only exists once stage 1 has walked past
+	// the closing quote, so the closing quote is certainly within it. That is what
+	// lets the fused path below run without a bound of its own.
+	boundKnown := maxStringSize != 0
 	// Clamp the scan bound to what is actually left in the message. The unsigned
 	// wrap-around also catches maxStringSize == 0, which indexCursor.peek returns when
 	// the next structural index has not been received yet: stage 1 keeps a trailing
@@ -183,6 +188,24 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 		clear(padded[copy(padded, buf):])
 		buf = padded
 	}
+	if needCopy && boundKnown {
+		// One pass: _parse_string copies a YMM word and looks for the closing quote
+		// and the next backslash in the same step, so a string that has to be copied
+		// anyway never needs the separate scan. This is what the reference simdjson
+		// does - its copy_and_find - and the only reason the scan came first here was
+		// to learn the length before reserving room for it.
+		//
+		// The bound serves instead: the decoded form is never longer than the source,
+		// which cannot reach past the next structural character.
+		start := pj.reserveStrings(maxStringSize+32, idx)
+		if !parseStringSimd(buf, &pj.Strings.B) {
+			return false
+		}
+		pj.write_tape(uint64(STRINGBUFBIT+start), '"')
+		pj.Tape = append(pj.Tape, uint64(len(pj.Strings.B)-start))
+		return true
+	}
+
 	srcLength := uint64(0)
 	if !parseStringSimdValidateOnly(buf, &maxStringSize, &srcLength, &size) {
 		return false
