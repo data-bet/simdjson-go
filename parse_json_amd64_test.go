@@ -598,16 +598,18 @@ func TestParseStringValidateOnlyBeyondBuffer(t *testing.T) {
 		t.SkipNow()
 	}
 
-	t.Skip()
+	// An unterminated string, with a closing quote sitting well past the window the
+	// scanner is allowed to look at. The scan must stop at maxStringSize and report
+	// failure rather than running on until it finds that quote.
+	buf := bytes.Repeat([]byte("a"), 256)
+	buf[0] = '"'
+	buf[200] = '"'
 
-	buf := []byte(fmt.Sprintf(`"%s`, "   "))
-
-	dst_length := uint64(0)
-	need_copy := false
-	l := uint64(len(buf)) + 32
-	success := parseStringSimdValidateOnly(buf, &l, &dst_length, &need_copy)
-	if !success {
-		t.Errorf("TestParseStringValidateOnlyBeyondBuffer() got = %v, want %v", success, false)
+	dstLength := uint64(0)
+	needCopy := false
+	maxStringSize := uint64(64)
+	if parseStringSimdValidateOnly(buf, &maxStringSize, &dstLength, &needCopy) {
+		t.Errorf("parseStringSimdValidateOnly() = true, want false: scan ran past maxStringSize=%d", maxStringSize)
 	}
 }
 
