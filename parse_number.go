@@ -18,6 +18,7 @@
 package simdjson
 
 import (
+	"encoding/binary"
 	"errors"
 	"math"
 	"strconv"
@@ -126,8 +127,27 @@ func fastInt(buf []byte) (mant uint64, ok bool) {
 	return mant, i == len(buf) || isNumberRune[buf[i]] == isEOVFlag
 }
 
-// fastFloat does the same for a token with a decimal point, also reporting how many
-// digits there are and where the point falls among them, so that the value is
+// eightDigitsASCII reports whether all eight bytes of w, read little-endian from
+// the message, are ASCII digits.
+func eightDigitsASCII(w uint64) bool {
+	return (w&0xF0F0F0F0F0F0F0F0)|
+		(((w+0x0606060606060606)&0xF0F0F0F0F0F0F0F0)>>4) == 0x3333333333333333
+}
+
+// foldEightDigits turns eight ASCII digits into the number they spell, pairing them
+// up and then combining the pairs. Folding them one at a time instead costs a
+// multiply per digit, and each depends on the one before, so a long mantissa spends
+// most of its time waiting on that chain.
+func foldEightDigits(w uint64) uint64 {
+	w -= 0x3030303030303030
+	w = (w*10 + (w >> 8)) & 0x00FF00FF00FF00FF
+	w = (w*100 + (w >> 16)) & 0x0000FFFF0000FFFF
+	w = (w*10000 + (w >> 32)) & 0x00000000FFFFFFFF
+	return w
+}
+
+// fastFloat folds the digits of a token with a decimal point, also reporting how
+// many there are and where the point falls among them, so that the value is
 // mant * 10^(dotAt-nd).
 //
 // ok is false for the shapes it leaves to strconv: exponents, a second decimal
@@ -148,6 +168,54 @@ func fastFloat(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
 		}
 		if c == '.' && dotAt < 0 {
 			dotAt = nd
+			continue
+		}
+		break
+	}
+	if i < len(buf) && isNumberRune[buf[i]] != isEOVFlag {
+		return 0, 0, 0, false
+	}
+	return mant, dotAt, nd, true
+}
+
+// fastFloatLong does the same for a mantissa long enough to be worth folding eight
+// digits at a time.
+//
+// It is a separate function rather than a flag on fastFloat because restructuring
+// that loop to accommodate both cost the files whose numbers are short 2-5%, even
+// with the wide fold switched off - the flat loop above is simply better code for
+// them. The caller picks this one when the mantissa is too long for atof64exact,
+// which is also where the multiply chain starts to dominate.
+func fastFloatLong(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
+	dotAt = -1
+	i := 0
+	if buf[0] == '-' {
+		i = 1
+	}
+	// Two passes round this loop at most: the digits before the decimal point, then
+	// the ones after it.
+	for {
+		for len(buf)-i >= 8 {
+			w := binary.LittleEndian.Uint64(buf[i:])
+			if !eightDigitsASCII(w) {
+				break
+			}
+			mant = mant*100000000 + foldEightDigits(w)
+			nd += 8
+			i += 8
+		}
+		for i < len(buf) {
+			d := buf[i] - '0'
+			if d > 9 {
+				break
+			}
+			mant = mant*10 + uint64(d)
+			nd++
+			i++
+		}
+		if i < len(buf) && buf[i] == '.' && dotAt < 0 {
+			dotAt = nd
+			i++
 			continue
 		}
 		break
@@ -255,14 +323,26 @@ func parseNumber(buf []byte) (id, val uint64) {
 		// Float can only have have a leading 0 when followed by a period.
 		return 0, 0
 	}
-	// 16 digits stay under 1e16, close enough to the largest exactly representable
-	// integer that it is worth folding them and letting atof64exact make the final
-	// call. Longer tokens skip the second pass entirely and go straight to strconv,
-	// so they pay nothing for it.
-	if nDigits <= 16 {
-		if mant, dotAt, nd, ok := fastFloat(buf); ok && dotAt >= 0 {
-			if f64, ok := atof64exact(mant, dotAt-nd, buf[0] == '-'); ok {
+	// 19 digits are the most a uint64 holds exactly, and up to that the digits folded
+	// above are all the conversion needs: float64 arithmetic while the scale keeps it
+	// exact, Eisel-Lemire beyond that. Longer tokens skip the second pass entirely and
+	// go straight to strconv, so they pay nothing for it.
+	if nDigits <= 19 {
+		fold := fastFloat
+		if nDigits > 16 {
+			// Too long for atof64exact, so it is heading for Eisel-Lemire and the
+			// digit-at-a-time multiply chain is what would dominate.
+			fold = fastFloatLong
+		}
+		if mant, dotAt, nd, ok := fold(buf); ok && dotAt >= 0 {
+			exp10, neg := dotAt-nd, buf[0] == '-'
+			if f64, ok := atof64exact(mant, exp10, neg); ok {
 				return floatTag, math.Float64bits(f64)
+			}
+			if mant != 0 {
+				if f64, ok := eiselLemire64(mant, exp10, neg); ok {
+					return floatTag, math.Float64bits(f64)
+				}
 			}
 		}
 	}
