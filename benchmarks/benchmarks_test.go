@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/buger/jsonparser"
+	"github.com/bytedance/sonic"
 	"github.com/klauspost/compress/zstd"
 
 	simdjson "github.com/minio/simdjson-go"
@@ -39,6 +40,37 @@ func benchmarkEncodingJson(b *testing.B, filename string) {
 	var parsed interface{}
 	for i := 0; i < b.N; i++ {
 		if err := json.Unmarshal(msg, &parsed); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// benchmarkSonic is the sonic row of the same group as benchmarkEncodingJson: the same
+// call, from a []byte, producing the same interface{}.
+//
+// sonic.Unmarshal is ConfigDefault, which - unlike encoding/json - refers to the input
+// for string values rather than copying them, and does not reject a raw control
+// character inside a string. BenchmarkMaterialise in samework_test.go is the row that
+// matches those semantics up; this one is here to be read next to its neighbour.
+func benchmarkSonic(b *testing.B, filename string) {
+	if !sonicIsNative {
+		b.Skip(sonicNotNative)
+	}
+	msg := loadCompressed(b, filename)
+
+	var parsed interface{}
+	// sonic compiles a decoder on first use. Timing that would charge the first
+	// iteration for work no later one repeats.
+	if err := sonic.Unmarshal(msg, &parsed); err != nil {
+		b.Fatal(err)
+	}
+
+	b.SetBytes(int64(len(msg)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		if err := sonic.Unmarshal(msg, &parsed); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -80,6 +112,21 @@ func BenchmarkEncodingJsonRandom(b *testing.B)         { benchmarkEncodingJson(b
 func BenchmarkEncodingJsonTwitter(b *testing.B)        { benchmarkEncodingJson(b, "twitter") }
 func BenchmarkEncodingJsonTwitterescaped(b *testing.B) { benchmarkEncodingJson(b, "twitterescaped") }
 func BenchmarkEncodingJsonUpdate_center(b *testing.B)  { benchmarkEncodingJson(b, "update-center") }
+
+func BenchmarkSonicApache_builds(b *testing.B)  { benchmarkSonic(b, "apache_builds") }
+func BenchmarkSonicCanada(b *testing.B)         { benchmarkSonic(b, "canada") }
+func BenchmarkSonicCitm_catalog(b *testing.B)   { benchmarkSonic(b, "citm_catalog") }
+func BenchmarkSonicGithub_events(b *testing.B)  { benchmarkSonic(b, "github_events") }
+func BenchmarkSonicGsoc_2018(b *testing.B)      { benchmarkSonic(b, "gsoc-2018") }
+func BenchmarkSonicInstruments(b *testing.B)    { benchmarkSonic(b, "instruments") }
+func BenchmarkSonicMarine_ik(b *testing.B)      { benchmarkSonic(b, "marine_ik") }
+func BenchmarkSonicMesh(b *testing.B)           { benchmarkSonic(b, "mesh") }
+func BenchmarkSonicMesh_pretty(b *testing.B)    { benchmarkSonic(b, "mesh.pretty") }
+func BenchmarkSonicNumbers(b *testing.B)        { benchmarkSonic(b, "numbers") }
+func BenchmarkSonicRandom(b *testing.B)         { benchmarkSonic(b, "random") }
+func BenchmarkSonicTwitter(b *testing.B)        { benchmarkSonic(b, "twitter") }
+func BenchmarkSonicTwitterescaped(b *testing.B) { benchmarkSonic(b, "twitterescaped") }
+func BenchmarkSonicUpdate_center(b *testing.B)  { benchmarkSonic(b, "update-center") }
 
 func BenchmarkSimdJsonApache_builds(b *testing.B)  { benchmarkSimdJson(b, "apache_builds") }
 func BenchmarkSimdJsonCanada(b *testing.B)         { benchmarkSimdJson(b, "canada") }
