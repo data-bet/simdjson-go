@@ -59,3 +59,9 @@ jobs:
 
     - name: Test 386
       run: GOOS=linux GOARCH=386 go test -short ./...
+
+    # Separate module, so `go test ./...` from the root never reaches it and it can
+    # break unnoticed - its go.sum drifting from the root module, for instance.
+    - name: Vet benchmarks module
+      working-directory: benchmarks
+      run: go vet ./...
