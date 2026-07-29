@@ -3,6 +3,7 @@
 
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -88,7 +89,12 @@ func ParseND(b []byte, reuse *ParsedJson, opts ...ParserOption) (*ParsedJson, er
 	if err != nil {
 		return nil, err
 	}
-	return &pj.ParsedJson, nil
+	// Hand the internal parser back with the result, so that passing it as `reuse` to a
+	// later call actually reuses it. Without this every ParseND re-allocates
+	// internalParsedJson, including its ~96 KB of index buffers.
+	parsed := &pj.ParsedJson
+	parsed.internal = pj
+	return parsed, nil
 }
 
 // A Stream is used to stream back results.

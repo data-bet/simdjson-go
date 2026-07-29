@@ -248,6 +248,54 @@ func verifyDemoNdjson(pj internalParsedJson, t *testing.T, object int) {
 	}
 }
 
+// TestParseNDReuse pins the contract of the reuse parameter: a ParsedJson handed back
+// by ParseND must carry its parser, or passing it to the next call reuses nothing and
+// every call re-allocates internalParsedJson with its index buffers.
+func TestParseNDReuse(t *testing.T) {
+	if !SupportedCPU() {
+		t.SkipNow()
+	}
+	ndjson := loadCompressed(t, "parking-citations")
+
+	first, err := ParseND(ndjson, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.internal == nil {
+		t.Fatal("ParseND returned a ParsedJson without its parser, so reuse cannot work")
+	}
+
+	want := first.internal
+	second, err := ParseND(ndjson, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.internal != want {
+		t.Errorf("ParseND(reuse) used a different parser: got %p want %p", second.internal, want)
+	}
+}
+
+func BenchmarkParseNDReuse(b *testing.B) {
+	if !SupportedCPU() {
+		b.SkipNow()
+	}
+	ndjson := loadCompressed(b, "parking-citations")
+
+	pj, err := ParseND(ndjson, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(ndjson)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pj, err = ParseND(ndjson, pj)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestNdjsonCountWhere(t *testing.T) {
 	if !SupportedCPU() {
 		t.SkipNow()
