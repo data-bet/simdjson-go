@@ -29,9 +29,9 @@ import (
 // man must be non-zero - the caller handles zero, whose exponent arithmetic does not
 // apply - and must be a mantissa of at most 19 decimal digits, so that it is exact.
 //
-// The powers of ten come from detailedPowersOfTen in ftoaryu.go, which the float
-// formatter there already needs: each entry is that power's significand truncated to
-// 128 bits and normalised so its top bit is set.
+// The powers of ten come from detailedPowersOfTen in detailed_powers_of_ten.go, which
+// the float formatter in ftoa_ryu.go already needs: each entry is that power's
+// significand truncated to 128 bits and normalised so its top bit is set.
 func eiselLemire64(man uint64, exp10 int, neg bool) (float64, bool) {
 	if exp10 < detailedPowersOfTenMinExp10 || exp10 > detailedPowersOfTenMaxExp10 {
 		return 0, false
