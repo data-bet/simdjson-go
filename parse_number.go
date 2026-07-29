@@ -67,17 +67,23 @@ var float64pow10 = [...]float64{
 	1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
 }
 
+// maxExactFloat64Int is the largest integer a float64 holds exactly: above it the
+// significand runs out and consecutive integers start sharing a representation.
+const maxExactFloat64Int = 1<<53 - 1
+
 // atof64exact converts mant * 10^exp to a float64 using floating point
 // arithmetic alone, and reports whether it was able to do so with the correctly
 // rounded result.
 //
-// That holds when every step is exact: mant must fit the 52 bit significand, and
-// the power of ten must be one of the exactly representable ones, so that a single
-// multiply or divide rounds once and lands on the nearest float64. Larger positive
-// exponents are still reachable by splitting off a factor of 10^22, as long as the
-// intermediate product stays below 1e15 and therefore exact.
+// That holds when both operands are exact: mant has to be representable, and the
+// power of ten has to be one of those below 10^23, so that a single multiply or
+// divide rounds once and lands on the nearest float64.
+//
+// Positive exponents past 22 are still reachable by splitting off a factor of
+// 10^22, but only while the intermediate product itself stays exact, for which 1e15
+// is a conservative bound.
 func atof64exact(mant uint64, exp int, neg bool) (float64, bool) {
-	if mant>>52 != 0 {
+	if mant > maxExactFloat64Int {
 		return 0, false
 	}
 	f := float64(mant)
@@ -87,17 +93,16 @@ func atof64exact(mant uint64, exp int, neg bool) (float64, bool) {
 	switch {
 	case exp == 0:
 		return f, true
-	case exp > 0 && exp <= 15+22:
-		if exp > 22 {
-			f *= float64pow10[exp-22]
-			exp = 22
-		}
-		if f > 1e15 || f < -1e15 {
-			return 0, false
-		}
+	case exp > 0 && exp <= 22:
 		return f * float64pow10[exp], true
 	case exp < 0 && exp >= -22:
 		return f / float64pow10[-exp], true
+	case exp > 22 && exp <= 15+22:
+		f *= float64pow10[exp-22]
+		if f > 1e15 || f < -1e15 {
+			return 0, false
+		}
+		return f * float64pow10[22], true
 	}
 	return 0, false
 }
@@ -250,10 +255,11 @@ func parseNumber(buf []byte) (id, val uint64) {
 		// Float can only have have a leading 0 when followed by a period.
 		return 0, 0
 	}
-	// 15 digits keep the mantissa inside the 52 bit significand, which is what
-	// atof64exact needs to stay exact. Longer tokens skip the second pass entirely
-	// and go straight to strconv, so they pay nothing for it.
-	if nDigits <= 15 {
+	// 16 digits stay under 1e16, close enough to the largest exactly representable
+	// integer that it is worth folding them and letting atof64exact make the final
+	// call. Longer tokens skip the second pass entirely and go straight to strconv,
+	// so they pay nothing for it.
+	if nDigits <= 16 {
 		if mant, dotAt, nd, ok := fastFloat(buf); ok && dotAt >= 0 {
 			if f64, ok := atof64exact(mant, dotAt-nd, buf[0] == '-'); ok {
 				return floatTag, math.Float64bits(f64)
