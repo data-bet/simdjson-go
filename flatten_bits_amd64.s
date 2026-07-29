@@ -8,6 +8,7 @@
 #define ZEROS   CX
 #define CARRIED DX
 #define PREVP   R8
+#define COUNT   R9
 #define POSITION R10
 
 TEXT ·_flatten_bits_incremental(SB), $0-40
@@ -39,29 +40,38 @@ TEXT ·_flatten_bits_incremental(SB), $0-40
 // variable shift made MASK depend on the trailing-zero count, putting TZCNT's three
 // cycle latency on the loop-carried path; BLSR depends on MASK alone, so the chain
 // is one cycle and TZCNT overlaps with the rest of the body.
+//
+// Neither POSITION nor CARRIED is accumulated in the loop. Every increment cancels
+// against the next, so the run as a whole only moves POSITION from the previous
+// structural character to the last one in this block, and the last one is wherever
+// the highest set bit is; both come straight out of the mask. The previous position
+// is then stepped on by the increment just written rather than reloaded from the
+// trailing-zero count, which keeps the same value in one register instead of two.
 TEXT ·__flatten_bits_incremental(SB), $0
 	TESTQ MASK, MASK
 	JE    empty
 
-	MOVQ CARRIED, PREVP
-	NOTQ PREVP            // PREVP = -(CARRIED+1)
-	XORQ CARRIED, CARRIED // CARRIED has been folded into PREVP
+	LZCNTQ MASK, ZEROS // 63 minus the position of the last one
+
+	// POSITION advances by (last - previous), and the previous one sits at
+	// -(CARRIED+1), so the whole distance is 64 - LZCNT + CARRIED.
+	ADDQ CARRIED, POSITION
+	ADDQ $64, POSITION
+	SUBQ ZEROS, POSITION
+
+	MOVQ CARRIED, PREVP // PREVP = -(CARRIED+1)
+	NOTQ PREVP
+	MOVQ ZEROS, CARRIED // what the next block has to carry
 
 loop:
 	TZCNTQ MASK, ZEROS
 	BLSRQ  MASK, MASK // clear the lowest set bit
-	MOVQ   ZEROS, R9
-	SUBQ   PREVP, R9  // increment since the previous structural character
-	MOVL   R9, (DI)(INDEX*4)
+	SUBQ   PREVP, ZEROS
+	MOVL   ZEROS, (DI)(INDEX*4)
+	ADDQ   ZEROS, PREVP
 	ADDQ   $1, INDEX
-	ADDQ   R9, POSITION
-	MOVQ   ZEROS, PREVP
 	TESTQ  MASK, MASK
 	JNE    loop
-
-	// The bits above the last one found are carried into the next block.
-	MOVQ $63, CARRIED
-	SUBQ PREVP, CARRIED
 	RET
 
 empty:
