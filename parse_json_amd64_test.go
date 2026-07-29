@@ -613,6 +613,33 @@ func TestParseStringValidateOnlyBeyondBuffer(t *testing.T) {
 	}
 }
 
+func TestParseMaxDepth(t *testing.T) {
+	if !SupportedCPU() {
+		t.SkipNow()
+	}
+
+	nest := func(depth int) []byte {
+		b := make([]byte, 0, 2*depth)
+		for i := 0; i < depth; i++ {
+			b = append(b, '[')
+		}
+		for i := 0; i < depth; i++ {
+			b = append(b, ']')
+		}
+		return b
+	}
+
+	// The root scope occupies one slot, so maxdepth-1 brackets still fit.
+	if _, err := Parse(nest(maxdepth-1), nil); err != nil {
+		t.Errorf("Parse() at depth %d: %v, want success", maxdepth-1, err)
+	}
+	for _, depth := range []int{maxdepth, maxdepth + 1, 100000} {
+		if _, err := Parse(nest(depth), nil); err == nil {
+			t.Errorf("Parse() at depth %d succeeded, want failure", depth)
+		}
+	}
+}
+
 // Benchmarking code for integers
 
 func BenchmarkParseNumber(b *testing.B) {

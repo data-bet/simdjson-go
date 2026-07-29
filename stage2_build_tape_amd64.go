@@ -61,6 +61,24 @@ func updateCharDebug(pj *internalParsedJson, idx_in uint64) (done bool, idx uint
 	return
 }
 
+// pushScope records the current tape location for the scope we are entering,
+// tagged with the state to return to when it closes. It reports false once
+// maxdepth is reached, so that deeply nested input is rejected instead of
+// growing containingScopeOffset without bound.
+//
+// initialize guarantees a capacity of at least maxdepth, so the depth check
+// doubles as the bounds check and the stack is filled in place - no append, and
+// therefore no growslice call or write barrier in the hot path.
+func (pj *internalParsedJson) pushScope(retAddress uint64) bool {
+	depth := len(pj.containingScopeOffset)
+	if depth >= maxdepth {
+		return false
+	}
+	pj.containingScopeOffset = pj.containingScopeOffset[:depth+1]
+	pj.containingScopeOffset[depth] = (pj.get_current_loc() << retAddressShift) | retAddress
+	return true
+}
+
 func peekSize(pj *internalParsedJson) uint64 {
 	if pj.indexesChan.index >= pj.indexesChan.length {
 		//panic("cannot peek the size") // should never happen since last string element should be saved for next buffer
@@ -175,7 +193,9 @@ func (pj *internalParsedJson) unifiedMachine() (ok, done bool) {
 	offset := uint64(0) // used to contain last element of containing_scope_offset
 
 	////////////////////////////// START STATE /////////////////////////////
-	pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressStartConst)
+	if !pj.pushScope(retAddressStartConst) {
+		goto fail
+	}
 
 	pj.write_tape(0, 'r') // r for root, 0 is going to get overwritten
 	// the root is used, if nothing else, to capture the size of the tape
@@ -186,11 +206,15 @@ func (pj *internalParsedJson) unifiedMachine() (ok, done bool) {
 continueRoot:
 	switch buf[idx] {
 	case '{':
-		pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressStartConst)
+		if !pj.pushScope(retAddressStartConst) {
+			goto fail
+		}
 		pj.write_tape(0, '{')
 		goto object_begin
 	case '[':
-		pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressStartConst)
+		if !pj.pushScope(retAddressStartConst) {
+			goto fail
+		}
 		pj.write_tape(0, '[')
 		goto arrayBegin
 	default:
@@ -224,7 +248,9 @@ startContinue:
 		pj.write_tape(offset>>retAddressShift, 'r') // r is root
 
 		// And open a new root
-		pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressStartConst)
+		if !pj.pushScope(retAddressStartConst) {
+			goto fail
+		}
 		pj.write_tape(0, 'r') // r for root, 0 is going to get overwritten
 
 		goto continueRoot
@@ -288,13 +314,17 @@ object_key_state:
 		}
 
 	case '{':
-		pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressObjectConst)
+		if !pj.pushScope(retAddressObjectConst) {
+			goto fail
+		}
 		pj.write_tape(0, '{')
 		// we have not yet encountered } so we need to come back for it
 		goto object_begin
 
 	case '[':
-		pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressObjectConst)
+		if !pj.pushScope(retAddressObjectConst) {
+			goto fail
+		}
 		pj.write_tape(0, '[')
 		// we have not yet encountered } so we need to come back for it
 		goto arrayBegin
@@ -396,13 +426,17 @@ mainArraySwitch:
 
 	case '{':
 		// we have not yet encountered ] so we need to come back for it
-		pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressArrayConst)
+		if !pj.pushScope(retAddressArrayConst) {
+			goto fail
+		}
 		pj.write_tape(0, '{') //  here the compilers knows what c is so this gets optimized
 		goto object_begin
 
 	case '[':
 		// we have not yet encountered ] so we need to come back for it
-		pj.containingScopeOffset = append(pj.containingScopeOffset, (pj.get_current_loc()<<retAddressShift)|retAddressArrayConst)
+		if !pj.pushScope(retAddressArrayConst) {
+			goto fail
+		}
 		pj.write_tape(0, '[') // here the compilers knows what c is so this gets optimized
 		goto arrayBegin
 

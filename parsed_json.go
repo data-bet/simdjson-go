@@ -1,5 +1,6 @@
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +30,10 @@ const JSONTAGMASK = 0xff << JSONTAGOFFSET
 const STRINGBUFBIT = 0x80_0000_0000_0000
 const STRINGBUFMASK = 0x7fffffffffffff
 
-const maxdepth = 128
+// maxdepth is the deepest nesting the tape builder accepts. It bounds
+// containingScopeOffset so that hostile input cannot grow it without limit;
+// the value matches the default depth limit of the reference simdjson.
+const maxdepth = 1024
 
 // FloatFlags are flags recorded when converting floats.
 type FloatFlags uint64
