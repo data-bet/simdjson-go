@@ -1,5 +1,6 @@
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -340,9 +341,12 @@ func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 		}
 		length := o.tape.Tape[o.off+1]
 		offset := v & JSONVALUEMASK
-		name, err = o.tape.stringByteAt(offset, length)
-		if err != nil {
-			return nil, TypeNone, fmt.Errorf("parsing object element name: %w", err)
+		// The inlinable form: a key name is read for every element of every object,
+		// which made the call itself worth removing.
+		var ok bool
+		if name, ok = o.tape.stringBytes(offset, length); !ok {
+			return nil, TypeNone, fmt.Errorf("parsing object element name: %w",
+				o.tape.stringOutsideArea(offset, length))
 		}
 		o.off += 2
 	case TagObjectEnd:

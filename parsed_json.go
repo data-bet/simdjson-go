@@ -142,20 +142,39 @@ func (pj *ParsedJson) stringAt(offset, length uint64) (string, error) {
 	return string(b), err
 }
 
+// stringBytes returns the string at a specific offset, in the message itself or in
+// the string buffer depending on the top bit, and whether the offset was in range.
+//
+// It is deliberately small enough to inline: readers call it once per string, and a
+// quarter of what the same code cost as a single function was the call.
+func (pj *ParsedJson) stringBytes(offset, length uint64) ([]byte, bool) {
+	if offset&STRINGBUFBIT == 0 {
+		if end := offset + length; end <= uint64(len(pj.Message)) {
+			return pj.Message[offset:end], true
+		}
+		return nil, false
+	}
+	start := offset & STRINGBUFMASK
+	if end := start + length; end <= uint64(len(pj.Strings.B)) {
+		return pj.Strings.B[start:end], true
+	}
+	return nil, false
+}
+
 // stringByteAt returns a string at a specific offset in the stringbuffer.
 func (pj *ParsedJson) stringByteAt(offset, length uint64) ([]byte, error) {
-	if offset&STRINGBUFBIT == 0 {
-		if offset+length > uint64(len(pj.Message)) {
-			return nil, fmt.Errorf("string message offset (%v) outside valid area (%v)", offset+length, len(pj.Message))
-		}
-		return pj.Message[offset : offset+length], nil
+	if b, ok := pj.stringBytes(offset, length); ok {
+		return b, nil
 	}
+	return nil, pj.stringOutsideArea(offset, length)
+}
 
-	offset = offset & STRINGBUFMASK
-	if offset+length > uint64(len(pj.Strings.B)) {
-		return nil, fmt.Errorf("string buffer offset (%v) outside valid area (%v)", offset+length, len(pj.Strings.B))
+//go:noinline
+func (pj *ParsedJson) stringOutsideArea(offset, length uint64) error {
+	if offset&STRINGBUFBIT == 0 {
+		return fmt.Errorf("string message offset (%v) outside valid area (%v)", offset+length, len(pj.Message))
 	}
-	return pj.Strings.B[offset : offset+length], nil
+	return fmt.Errorf("string buffer offset (%v) outside valid area (%v)", (offset&STRINGBUFMASK)+length, len(pj.Strings.B))
 }
 
 // ForEach returns each line in NDJSON, or the top element in non-ndjson.
@@ -304,6 +323,11 @@ func (i *Iter) moveToEnd() {
 
 // calcNext will populate addNext to the correct value to skip.
 // Specify whether to move into objects/array.
+//
+// The switch stays a switch. Replacing it with a lookup by tag was tried and put a
+// load where a handful of register compares had been - and addNext feeds the next
+// element's offset, so that load lands on the loop's own dependency chain. Walking a
+// document without reading anything out of it got 20-33% slower.
 func (i *Iter) calcNext(into bool) {
 	i.addNext = 0
 	switch i.t {
@@ -784,7 +808,12 @@ func (i *Iter) StringBytes() ([]byte, error) {
 	if i.off >= len(i.tape.Tape) {
 		return nil, errors.New("corrupt input: no string offset on tape")
 	}
-	return i.tape.stringByteAt(i.cur, i.tape.Tape[i.off])
+	// The inlinable form, so that reading a string is slice arithmetic here rather
+	// than a call.
+	if b, ok := i.tape.stringBytes(i.cur, i.tape.Tape[i.off]); ok {
+		return b, nil
+	}
+	return nil, i.tape.stringOutsideArea(i.cur, i.tape.Tape[i.off])
 }
 
 // SetString can change a string, int, uint or float with the specified string.
