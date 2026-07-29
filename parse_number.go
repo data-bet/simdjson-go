@@ -1,5 +1,6 @@
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +20,6 @@ package simdjson
 import (
 	"errors"
 	"math"
-	"reflect"
 	"strconv"
 	"unsafe"
 )
@@ -134,16 +134,16 @@ func parseNumber(buf []byte) (id, val uint64) {
 	return 0, 0
 }
 
-// unsafeBytesToString should only be used when we have control of b.
-func unsafeBytesToString(b []byte) (s string) {
-	var length = len(b)
-
-	if length == 0 {
+// unsafeBytesToString should only be used when we have control of b, and only while b
+// is not written to.
+//
+// unsafe.String rather than a reflect.StringHeader assembled through an unsafe.Pointer:
+// that header's Data field is a uintptr, which the collector does not recognise as a
+// reference, so between assembling the header and using the string nothing keeps the
+// bytes alive. unsafe.String takes a real pointer and has no such window.
+func unsafeBytesToString(b []byte) string {
+	if len(b) == 0 {
 		return ""
 	}
-
-	stringHeader := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	stringHeader.Data = uintptr(unsafe.Pointer(&b[0]))
-	stringHeader.Len = length
-	return s
+	return unsafe.String(&b[0], len(b))
 }
