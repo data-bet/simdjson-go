@@ -115,9 +115,10 @@ type internalParsedJson struct {
 	// allocating. syncSizeLimit caps that: a message of that many bytes cannot hold
 	// more indexes, so the most a parser can end up holding here is about 900 KB, and
 	// only if it was handed the densest possible document at the top of the range.
-	syncBufs    []*[indexSize]uint32
-	ndjson      uint64
-	copyStrings bool
+	syncBufs     []*[indexSize]uint32
+	ndjson       uint64
+	copyStrings  bool
+	validateUTF8 bool
 	// padBuf holds a zero-tailed copy of a string that sits too close to the end
 	// of the message for the scanner to read whole words past it. See parseString.
 	padBuf []byte

@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"errors"
 	"sync"
+	"unicode/utf8"
 )
 
 // syncSizeLimit is the largest message stage 1 and stage 2 handle one after the
@@ -76,6 +77,15 @@ func (pj *internalParsedJson) parseMessage(msg []byte, ndjson bool) (err error) 
 	// Cache message so we can point directly to strings
 	// TODO: Find out why TestVerifyTape/instruments fails without bytes.TrimSpace
 	pj.Message = bytes.TrimSpace(msg)
+
+	// Checked up front so that malformed input is rejected before any work, and
+	// over the whole message rather than per string: a byte above 0x7f outside a
+	// string is not structural, not whitespace and starts no valid value, so the
+	// stages reject it anyway.
+	if pj.validateUTF8 && !utf8.Valid(pj.Message) {
+		return errors.New("Input is not valid UTF-8")
+	}
+
 	pj.initialize(len(pj.Message))
 
 	if ndjson {
