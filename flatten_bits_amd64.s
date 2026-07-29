@@ -7,7 +7,7 @@
 #define INDEX   BX
 #define ZEROS   CX
 #define CARRIED DX
-#define SHIFTS  R8
+#define PREVP   R8
 #define POSITION R10
 
 TEXT ·_flatten_bits_incremental(SB), $0-40
@@ -26,38 +26,44 @@ TEXT ·_flatten_bits_incremental(SB), $0-40
 	MOVQ INDEX, (SI)
 	RET
 
+// __flatten_bits_incremental turns the structural bitmask in MASK into the
+// increments the tape builder consumes, appending them at INDEX and advancing
+// POSITION to the absolute offset of the last one.
+//
+// Each increment is the distance from the previous structural character, so the
+// first one in a block also has to cover the bits carried over from blocks that
+// held none. Seeding the previous bit position with -(CARRIED+1) folds that in:
+// every increment is then just the difference between two bit positions.
+//
+// Bits are taken with BLSR rather than by shifting MASK right past each one. A
+// variable shift made MASK depend on the trailing-zero count, putting TZCNT's three
+// cycle latency on the loop-carried path; BLSR depends on MASK alone, so the chain
+// is one cycle and TZCNT overlaps with the rest of the body.
 TEXT ·__flatten_bits_incremental(SB), $0
-	XORQ SHIFTS, SHIFTS
+	TESTQ MASK, MASK
+	JE    empty
 
-	// First iteration takes CARRIED into account
-	TZCNTQ MASK, ZEROS
-	JCS    done        // carry is set if ZEROS == 64
-
-	// Two shifts required because maximum combined shift (63+1) exceeds 6-bits
-	SHRQ $1, MASK
-	SHRQ ZEROS, MASK
-	INCQ ZEROS
-	ADDQ ZEROS, SHIFTS
-	ADDQ CARRIED, ZEROS
-	MOVL ZEROS, (DI)(INDEX*4)
-	ADDQ $1, INDEX
-	ADDQ ZEROS, POSITION
-	XORQ CARRIED, CARRIED     // Reset CARRIED to 0 (since it has been used)
+	MOVQ CARRIED, PREVP
+	NOTQ PREVP            // PREVP = -(CARRIED+1)
+	XORQ CARRIED, CARRIED // CARRIED has been folded into PREVP
 
 loop:
 	TZCNTQ MASK, ZEROS
-	JCS    done        // carry is set if ZEROS == 64
+	BLSRQ  MASK, MASK // clear the lowest set bit
+	MOVQ   ZEROS, R9
+	SUBQ   PREVP, R9  // increment since the previous structural character
+	MOVL   R9, (DI)(INDEX*4)
+	ADDQ   $1, INDEX
+	ADDQ   R9, POSITION
+	MOVQ   ZEROS, PREVP
+	TESTQ  MASK, MASK
+	JNE    loop
 
-	INCQ ZEROS
-	SHRQ ZEROS, MASK
-	ADDQ ZEROS, SHIFTS
-	MOVL ZEROS, (DI)(INDEX*4)
-	ADDQ $1, INDEX
-	ADDQ ZEROS, POSITION
-	JMP  loop
+	// The bits above the last one found are carried into the next block.
+	MOVQ $63, CARRIED
+	SUBQ PREVP, CARRIED
+	RET
 
-done:
-	MOVQ $64, R9
-	SUBQ SHIFTS, R9
-	ADDQ R9, CARRIED // CARRIED += 64 - shifts (remaining empty bits to carry over to next call)
+empty:
+	ADDQ $64, CARRIED // no structural characters here, carry the whole block over
 	RET

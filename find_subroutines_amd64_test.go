@@ -3,6 +3,7 @@
 
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +21,7 @@
 package simdjson
 
 import (
+	"math/bits"
 	"reflect"
 	"runtime"
 	"strings"
@@ -787,15 +789,25 @@ func BenchmarkFlattenBits(b *testing.B) {
 
 	structuralsArray := make([]uint64, 0, len(msg)>>6)
 
-	// Collect all structurals into array
+	// Collect all structurals into array.
+	// find_structural_bits returns the mask; ignoring the result left this benchmark
+	// flattening 10k zero masks, which only ever exercised the empty-block branch.
 	for i := 0; i < len(msg)-64; i += 64 {
-		find_structural_bits([]byte(msg)[i:], &prev_iter_ends_odd_backslash,
+		structurals = find_structural_bits([]byte(msg)[i:], &prev_iter_ends_odd_backslash,
 			&prev_iter_inside_quote, &error_mask,
 			structurals,
 			&prev_iter_ends_pseudo_pred)
 
 		structuralsArray = append(structuralsArray, structurals)
 	}
+	set := 0
+	for _, s := range structuralsArray {
+		set += bits.OnesCount64(s)
+	}
+	if set == 0 {
+		b.Fatal("no structural bits collected")
+	}
+	b.Logf("%d masks, %d structural bits", len(structuralsArray), set)
 
 	b.SetBytes(int64(len(structuralsArray) * 8))
 	b.ReportAllocs()
