@@ -11,7 +11,9 @@ jobs:
   build:
     strategy:
       matrix:
-        go-version: [1.22.x, 1.23.x, 1.24.x]
+        # The dependencies require 1.25.0, so go.mod does too; an older toolchain
+        # cannot build this module without fetching a newer one.
+        go-version: [1.25.x, 1.26.x]
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       CGO_ENABLED: 0

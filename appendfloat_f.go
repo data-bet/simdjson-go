@@ -1,8 +1,10 @@
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// license that can be found in the LICENSE-go file.
 
 // Modified for 'f' format with inlined variables.
+
+// Modified 2026 by DATA.BET; the modifications are released under the same terms.
 
 package simdjson
 
@@ -81,18 +83,4 @@ func fmtF(dst []byte, neg bool, d decimalSlice, prec int) []byte {
 	}
 
 	return dst
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
