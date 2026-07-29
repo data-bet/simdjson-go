@@ -1,5 +1,9 @@
 # simdjson-go
 
+This is [DATA.BET](https://data.bet)'s fork of
+[minio/simdjson-go](https://github.com/minio/simdjson-go). [NOTICE](NOTICE) says which
+parts were inherited, which were changed here, and under which licence each stands.
+
 ## Introduction
 
 This is a Golang port of [simdjson](https://github.com/lemire/simdjson),
@@ -573,7 +577,8 @@ both stages run concurrently as separate go routines and a go channel is used to
 
 ### Stage 1
 
-Stage 1 has been converted from the original C code (containing the SIMD intrinsics) to Golang assembly using [c2goasm](https://github.com/minio/c2goasm).
+Stage 1 was originally converted from C code containing the SIMD intrinsics to Golang assembly using [c2goasm](https://github.com/minio/c2goasm).
+That C code is no longer part of this repository, and the assembly has been maintained by hand since - the AVX-512 variants in particular were written directly - so the `.s` files, not any generator, are the definition of what stage 1 does.
 It essentially consists of five separate steps, being:
 
 - `find_odd_backslash_sequences`: detect backslash characters used to escape quotes

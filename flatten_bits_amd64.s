@@ -1,4 +1,7 @@
-//+build !noasm !appengine gc
+//go:build !noasm && !appengine && gc
+
+// Modifications copyright (c) 2026 DATA.BET, licensed under the Apache License,
+// Version 2.0.
 
 #define MASK    AX
 #define INDEX   BX

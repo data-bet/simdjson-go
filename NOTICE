@@ -1,0 +1,31 @@
+simdjson-go
+
+Copyright (c) 2020-2022 MinIO, Inc.
+Copyright (c) 2026 DATA.BET
+
+This repository is a fork of https://github.com/minio/simdjson-go, which is licensed
+under the Apache License, Version 2.0; see LICENSE.
+
+Which notice a file carries says where it came from:
+
+  * only a MinIO notice - the file is as MinIO published it;
+  * a MinIO notice and a "Modifications copyright (c) 2026 DATA.BET" line - MinIO's
+    file, changed in this fork;
+  * only a DATA.BET notice - written for this fork.
+
+Files with no copyright notice of their own - the amd64 assembly and common.h - are
+MinIO's, and the ones this fork changed say so in their leading comment.
+
+Portions of this software are derived from the Go standard library and are licensed
+under the BSD 3-Clause licence rather than Apache-2.0; see LICENSE-go:
+
+  atof_eisel_lemire.go       a re-implementation of strconv's eiselLemire64
+  detailed_powers_of_ten.go  the table strconv and ftoa share
+  ftoa_append.go             strconv's float formatter, cut down to 'f'
+  ftoa_ryu.go                strconv's Ryu implementation
+
+The parsing algorithms, and the amd64 assembly that implements them, follow simdjson
+(https://github.com/simdjson/simdjson) by Daniel Lemire, Geoff Langdale and
+contributors, licensed under the Apache License, Version 2.0. The number parser follows
+Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and
+Experience 51:8 (2021).

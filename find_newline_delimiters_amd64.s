@@ -1,6 +1,9 @@
-//+build !noasm !appengine gc
+//go:build !noasm && !appengine && gc
 
 // _find_newline_delimiters(raw []byte) (mask uint64)
+//
+// Modifications copyright (c) 2026 DATA.BET, licensed under the Apache License,
+// Version 2.0.
 TEXT ·_find_newline_delimiters(SB), 7, $0
 	MOVQ    raw+0(FP), SI        // SI: &raw
 	MOVQ    quoteMask+24(FP), DX // get quotemask

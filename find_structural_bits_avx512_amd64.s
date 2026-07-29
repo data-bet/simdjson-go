@@ -1,4 +1,14 @@
-//+build !noasm !appengine gc
+//go:build !noasm && !appengine && gc
+
+// Hand-written, and the AVX-512 counterpart of find_structural_bits_amd64.s. It has
+// fewer arguments because the steps hand their masks to each other in the K registers
+// named in common.h rather than through the caller's memory, and it calls the __init_
+// routines once up front to load the constants those steps read out of fixed Z
+// registers. The masking tail is still AVX2: it builds Y8 and Y9 the way the AVX2 path
+// does and then folds them into Z8.
+//
+// Modifications copyright (c) 2026 DATA.BET, licensed under the Apache License,
+// Version 2.0.
 
 #include "common.h"
 

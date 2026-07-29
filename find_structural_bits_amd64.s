@@ -1,4 +1,12 @@
-//+build !noasm !appengine gc
+//go:build !noasm && !appengine && gc
+
+// Hand-written, unlike the five steps it calls: this is the glue that runs them over
+// one 64-byte block and, in _find_structural_bits_in_slice, over a whole slice of the
+// message. The steps hand their masks to each other through the caller's memory,
+// which is why the argument list is a list of pointers rather than of values.
+//
+// Modifications copyright (c) 2026 DATA.BET, licensed under the Apache License,
+// Version 2.0.
 
 TEXT ·_find_structural_bits(SB), $0-72
 
