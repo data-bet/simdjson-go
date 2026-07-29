@@ -21,7 +21,6 @@
 package simdjson
 
 import (
-	"reflect"
 	"unsafe"
 )
 
@@ -48,19 +47,24 @@ func parseStringSimdValidateOnly(buf []byte, maxStringSize, dstLength *uint64, n
 	return success != 0
 }
 
+// parseStringSimd decodes the string starting at buf[1] and appends it to *stringbuf.
+//
+// The caller must have reserved spare capacity for the decoded string plus the 32 byte
+// overshoot of the copy loop: the assembly writes straight into the existing backing
+// array, so the slice must never have to be reallocated.
 func parseStringSimd(buf []byte, stringbuf *[]byte) bool {
 
-	sh := (*reflect.SliceHeader)(unsafe.Pointer(stringbuf))
 	sb := *stringbuf
-	sb = append(sb, 0)
+	// Indexing the full-capacity slice panics rather than corrupting memory if the
+	// caller under-reserved.
+	dst := unsafe.Pointer(&sb[:cap(sb)][len(sb)])
+	stringBufLoc := dst
 
 	src := unsafe.Pointer(&buf[1]) // Use buf[1] in order to skip opening quote
-	string_buf_loc := unsafe.Pointer(uintptr(unsafe.Pointer(&sb[0])) + uintptr(sh.Len)*unsafe.Sizeof(sb[0]))
-	dst := string_buf_loc
 
-	res := _parse_string(src, dst, unsafe.Pointer(&string_buf_loc))
+	res := _parse_string(src, dst, unsafe.Pointer(&stringBufLoc))
 
-	sh.Len += int(uintptr(string_buf_loc) - uintptr(dst))
+	*stringbuf = sb[:len(sb)+int(uintptr(stringBufLoc)-uintptr(dst))]
 
 	return res != 0
 }
