@@ -46,16 +46,30 @@ const retAddressArrayConst = 3
 type indexCursor struct {
 	idxs []uint32
 	pos  int
+	buf  int // next entry of pj.indexList, when stage 1 ran to completion first
 }
 
 // next returns the offset of the next structural character in the message, taking
-// the next buffer from stage 1 when the current one runs out. done reports that
-// stage 1 has signalled the end of the stream.
+// the next buffer of indexes from stage 1 when the current one runs out. done
+// reports that stage 1 has no more to give.
+//
+// The refill is a loop rather than a single step so that an empty buffer is skipped:
+// stage 1 can emit one, having stripped a trailing quote back for the next round to
+// re-emit, and there would otherwise be no index to read.
 func (c *indexCursor) next(pj *internalParsedJson, idxIn uint64) (done bool, idx uint64) {
-	if c.pos >= len(c.idxs) {
-		ic := <-pj.indexChans
-		if ic.index == -1 {
-			return true, idxIn
+	for c.pos >= len(c.idxs) {
+		var ic indexChan
+		if pj.async {
+			ic = <-pj.indexChans
+			if ic.index == -1 {
+				return true, idxIn
+			}
+		} else {
+			if c.buf >= len(pj.indexList) {
+				return true, idxIn
+			}
+			ic = pj.indexList[c.buf]
+			c.buf++
 		}
 		c.idxs, c.pos = ic.indexes[ic.index:ic.length], 0
 	}

@@ -3,6 +3,7 @@
 
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -135,13 +136,19 @@ func (pj *internalParsedJson) findStructuralIndices() bool {
 			index.length -= 1
 		}
 
-		pj.indexChans <- index
+		if pj.async {
+			pj.indexChans <- index
+		} else {
+			pj.indexList = append(pj.indexList, index)
+		}
 		indexTotal += index.length
 
 		buf = buf[processed:]
 		position -= processed
 	}
-	pj.indexChans <- indexChan{index: -1}
+	if pj.async {
+		pj.indexChans <- indexChan{index: -1}
+	}
 
 	// a valid JSON file cannot have zero structural indexes - we should have found something
 	return error_mask == 0 && indexTotal > 0

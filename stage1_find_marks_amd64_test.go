@@ -3,6 +3,7 @@
 
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -141,6 +142,9 @@ func TestFindStructuralIndices(t *testing.T) {
 	}
 
 	pj := internalParsedJson{}
+	// Drives stage 1 on its own, so it wants the channel hand-off rather than the
+	// collect-into-a-slice path parseMessage uses for small inputs.
+	pj.async = true
 	pj.indexChans = make(chan indexChan, 16)
 
 	// No need to spawn go-routine since the channel is large enough
@@ -175,6 +179,7 @@ func BenchmarkStage1(b *testing.B) {
 	b.ResetTimer()
 
 	pj := internalParsedJson{}
+	pj.async = true // stage 1 alone, so hand buffers over the channel
 	pj.Message = msg
 	for i := 0; i < b.N; i++ {
 		// Create new channel (large enough so we won't block)

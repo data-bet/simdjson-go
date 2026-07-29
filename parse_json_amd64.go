@@ -26,6 +26,10 @@ import (
 	"sync"
 )
 
+// syncSizeLimit is the largest message stage 1 and stage 2 handle one after the
+// other rather than concurrently. See internalParsedJson.async for what bounds it.
+const syncSizeLimit = 8 << 10
+
 func (pj *internalParsedJson) initialize(size int) {
 	// Estimate the tape size to be about 15% of the length of the JSON message.
 	// Across the test corpus the real figure runs from 2.3% (string heavy) to 21.6%
@@ -53,6 +57,7 @@ func (pj *internalParsedJson) initialize(size int) {
 		pj.containingScopeOffset = make([]uint64, 0, maxdepth)
 	}
 	pj.containingScopeOffset = pj.containingScopeOffset[:0]
+	pj.indexList = pj.indexList[:0]
 }
 
 func (pj *internalParsedJson) parseMessage(msg []byte, ndjson bool) (err error) {
@@ -67,18 +72,19 @@ func (pj *internalParsedJson) parseMessage(msg []byte, ndjson bool) (err error) 
 		pj.ndjson = 0
 	}
 
-	// Make the capacity of the channel smaller than the number of slots.
-	// This way the sender will automatically block until the consumer
-	// has finished the slot it is working on.
-	if pj.indexChans == nil {
-		pj.indexChans = make(chan indexChan, indexSlots-2)
-	}
 	pj.buffersOffset = ^uint64(0)
 
 	var errStage1 error
 
 	// Do long inputs async
-	if len(pj.Message) > 8<<10 {
+	pj.async = len(pj.Message) > syncSizeLimit
+	if pj.async {
+		// Make the capacity of the channel smaller than the number of slots.
+		// This way the sender will automatically block until the consumer
+		// has finished the slot it is working on.
+		if pj.indexChans == nil {
+			pj.indexChans = make(chan indexChan, indexSlots-2)
+		}
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
@@ -100,28 +106,13 @@ func (pj *internalParsedJson) parseMessage(msg []byte, ndjson bool) (err error) 
 		}
 		wg.Wait()
 	} else {
+		// Stage 1 collects into pj.indexList, so there is no channel to hand over and
+		// nothing to drain on the way out.
 		if !pj.findStructuralIndices() {
-			// drain the channel until empty
-			for idx := range pj.indexChans {
-				if idx.index == -1 {
-					break
-				}
-			}
 			return errors.New("Failed to find all structural indices for stage 1")
 		}
 		if ok, _ := pj.unifiedMachine(); !ok {
-			// drain the channel until empty
-			for {
-				select {
-				case idx := <-pj.indexChans:
-					if idx.index == -1 {
-						return errors.New("Bad parsing while executing stage 2")
-					}
-					// Already drained.
-				default:
-					return errors.New("Bad parsing while executing stage 2")
-				}
-			}
+			return errors.New("Bad parsing while executing stage 2")
 		}
 		return nil
 	}

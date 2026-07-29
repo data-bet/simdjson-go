@@ -89,10 +89,22 @@ type internalParsedJson struct {
 	containingScopeOffset []uint64
 	isvalid               bool
 	indexChans            chan indexChan
-	buffers               [indexSlots][indexSize]uint32
-	buffersOffset         uint64
-	ndjson                uint64
-	copyStrings           bool
+	// async says stage 1 and stage 2 run concurrently and hand buffers over
+	// indexChans. When they do not, stage 1 runs to completion first and collects
+	// them in indexList instead, which spares the channel traffic - on a small
+	// document that was about a quarter of the parse.
+	//
+	// Without the channel there is no back pressure, so every buffer stage 1 produces
+	// has to stay live at once. That bounds the synchronous path: buffers hold
+	// indexSizeWithSafetyBuffer indexes each and a message cannot have more indexes
+	// than bytes, so the syncSizeLimit byte cutoff in parseMessage keeps the count
+	// well inside indexSlots.
+	async         bool
+	indexList     []indexChan
+	buffers       [indexSlots][indexSize]uint32
+	buffersOffset uint64
+	ndjson        uint64
+	copyStrings   bool
 	// padBuf holds a zero-tailed copy of a string that sits too close to the end
 	// of the message for the scanner to read whole words past it. See parseString.
 	padBuf []byte

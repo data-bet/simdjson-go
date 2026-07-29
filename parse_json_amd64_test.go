@@ -105,6 +105,7 @@ func BenchmarkNdjsonStage1(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
+	pj.async = true // stage 1 alone, so hand buffers over the channel
 	pj.Message = ndjson
 	for i := 0; i < b.N; i++ {
 		// Create new channel (large enough so we won't block)
