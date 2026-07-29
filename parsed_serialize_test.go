@@ -1,5 +1,6 @@
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -129,7 +130,7 @@ func BenchmarkSerializeNDJSON(b *testing.B) {
 		b.SkipNow()
 	}
 
-	ndjson := loadFile("testdata/parking-citations-1M.json.zst")
+	ndjson := loadFile(b, "testdata/parking-citations-1M.json.zst")
 
 	pj, err := ParseND(ndjson, nil)
 	if err != nil {
@@ -172,7 +173,7 @@ func BenchmarkDeSerializeNDJSON(b *testing.B) {
 		b.SkipNow()
 	}
 
-	ndjson := loadFile("testdata/parking-citations-1M.json.zst")
+	ndjson := loadFile(b, "testdata/parking-citations-1M.json.zst")
 
 	pj, err := ParseND(ndjson, nil)
 	if err != nil {
@@ -224,7 +225,7 @@ func TestDeSerializeNDJSON(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping... too long")
 	}
-	ndjson := loadFile("testdata/parking-citations.json.zst")
+	ndjson := loadFile(t, "testdata/parking-citations.json.zst")
 
 	pj, err := ParseND(ndjson, nil)
 	if err != nil {
