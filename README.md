@@ -359,7 +359,7 @@ Example of speed for serializer/deserializer on [`parking-citations-1M`](https:/
 
 In some cases the speed difference and compression difference will be bigger.
 
-## Performance vs `encoding/json` and `json-iterator/go`
+## Performance vs `encoding/json`
 
 Though simdjson provides different output than traditional unmarshal functions this can give
 an overview of the expected performance for reading specific data in JSON.
@@ -434,76 +434,6 @@ BenchmarkTwitter-32            2152260       2550          -99.88%
 BenchmarkTwitterescaped-32     2330548       3062          -99.87%
 BenchmarkUpdate_center-32      2729631       3235          -99.88%
 ```
-
-Here is another benchmark comparison to `json-iterator/go`, unmarshal to `interface{}`.
-
-```
-λ benchcmp jsiter.txt simdjson.txt
-benchmark                      old ns/op     new ns/op     delta
-BenchmarkApache_builds-32      891370        142972        -83.96%
-BenchmarkCanada-32             52365386      13417193      -74.38%
-BenchmarkCitm_catalog-32       10154544      1359983       -86.61%
-BenchmarkGithub_events-32      398741        74042         -81.43%
-BenchmarkGsoc_2018-32          15584278      1259171       -91.92%
-BenchmarkInstruments-32        1858339       301370        -83.78%
-BenchmarkMarine_ik-32          49881479      14419901      -71.09%
-BenchmarkMesh-32               15038300      4206251       -72.03%
-BenchmarkMesh_pretty-32        17655583      4786081       -72.89%
-BenchmarkNumbers-32            2903165       909641        -68.67%
-BenchmarkRandom-32             6156849       1004387       -83.69%
-BenchmarkTwitter-32            4655981       588773        -87.35%
-BenchmarkTwitterescaped-32     5521004       972250        -82.39%
-BenchmarkUpdate_center-32      5540200       708717        -87.21%
-
-benchmark                      old MB/s     new MB/s     speedup
-BenchmarkApache_builds-32      142.79       890.21       6.23x
-BenchmarkCanada-32             42.99        167.77       3.90x
-BenchmarkCitm_catalog-32       170.09       1270.02      7.47x
-BenchmarkGithub_events-32      163.34       879.67       5.39x
-BenchmarkGsoc_2018-32          213.54       2642.88      12.38x
-BenchmarkInstruments-32        118.57       731.15       6.17x
-BenchmarkMarine_ik-32          59.81        206.90       3.46x
-BenchmarkMesh-32               48.12        172.03       3.58x
-BenchmarkMesh_pretty-32        89.34        329.57       3.69x
-BenchmarkNumbers-32            51.71        165.04       3.19x
-BenchmarkRandom-32             82.91        508.25       6.13x
-BenchmarkTwitter-32            135.64       1072.59      7.91x
-BenchmarkTwitterescaped-32     101.87       578.46       5.68x
-BenchmarkUpdate_center-32      96.24        752.31       7.82x
-
-benchmark                      old allocs     new allocs     delta
-BenchmarkApache_builds-32      13248          22             -99.83%
-BenchmarkCanada-32             665988         250            -99.96%
-BenchmarkCitm_catalog-32       118755         110            -99.91%
-BenchmarkGithub_events-32      4442           17             -99.62%
-BenchmarkGsoc_2018-32          90915          67             -99.93%
-BenchmarkInstruments-32        18776          33             -99.82%
-BenchmarkMarine_ik-32          692512         467            -99.93%
-BenchmarkMesh-32               184137         122            -99.93%
-BenchmarkMesh_pretty-32        204037         122            -99.94%
-BenchmarkNumbers-32            30037          28             -99.91%
-BenchmarkRandom-32             88091          76             -99.91%
-BenchmarkTwitter-32            45040          53             -99.88%
-BenchmarkTwitterescaped-32     47198          53             -99.89%
-BenchmarkUpdate_center-32      66757          58             -99.91%
-
-benchmark                      old bytes     new bytes     delta
-BenchmarkApache_builds-32      518350        965           -99.81%
-BenchmarkCanada-32             16189358      39793         -99.75%
-BenchmarkCitm_catalog-32       5571982       6089          -99.89%
-BenchmarkGithub_events-32      221631        802           -99.64%
-BenchmarkGsoc_2018-32          11771591      17215         -99.85%
-BenchmarkInstruments-32        991674        1310          -99.87%
-BenchmarkMarine_ik-32          25257277      189870        -99.25%
-BenchmarkMesh-32               7991707       15483         -99.81%
-BenchmarkMesh_pretty-32        8628570       12066         -99.86%
-BenchmarkNumbers-32            1226518       1280          -99.90%
-BenchmarkRandom-32             3167528       4096          -99.87%
-BenchmarkTwitter-32            2426730       2550          -99.89%
-BenchmarkTwitterescaped-32     2607198       3062          -99.88%
-BenchmarkUpdate_center-32      3052382       3235          -99.89%
-```
-
 
 ### Inplace strings
 

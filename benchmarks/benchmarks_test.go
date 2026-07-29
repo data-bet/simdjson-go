@@ -1,5 +1,6 @@
 /*
  * MinIO Cloud Storage, (C) 2022 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +24,6 @@ import (
 	"testing"
 
 	"github.com/buger/jsonparser"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/klauspost/compress/zstd"
 
 	simdjson "github.com/minio/simdjson-go"
@@ -36,22 +36,6 @@ func benchmarkEncodingJson(b *testing.B, filename string) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	var parsed interface{}
-	for i := 0; i < b.N; i++ {
-		if err := json.Unmarshal(msg, &parsed); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func benchmarkJsoniter(b *testing.B, filename string) {
-	msg := loadCompressed(b, filename)
-
-	b.SetBytes(int64(len(msg)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
 	var parsed interface{}
 	for i := 0; i < b.N; i++ {
 		if err := json.Unmarshal(msg, &parsed); err != nil {
@@ -96,21 +80,6 @@ func BenchmarkEncodingJsonRandom(b *testing.B)         { benchmarkEncodingJson(b
 func BenchmarkEncodingJsonTwitter(b *testing.B)        { benchmarkEncodingJson(b, "twitter") }
 func BenchmarkEncodingJsonTwitterescaped(b *testing.B) { benchmarkEncodingJson(b, "twitterescaped") }
 func BenchmarkEncodingJsonUpdate_center(b *testing.B)  { benchmarkEncodingJson(b, "update-center") }
-
-func BenchmarkJsoniterApache_builds(b *testing.B)  { benchmarkJsoniter(b, "apache_builds") }
-func BenchmarkJsoniterCanada(b *testing.B)         { benchmarkJsoniter(b, "canada") }
-func BenchmarkJsoniterCitm_catalog(b *testing.B)   { benchmarkJsoniter(b, "citm_catalog") }
-func BenchmarkJsoniterGithub_events(b *testing.B)  { benchmarkJsoniter(b, "github_events") }
-func BenchmarkJsoniterGsoc_2018(b *testing.B)      { benchmarkJsoniter(b, "gsoc-2018") }
-func BenchmarkJsoniterInstruments(b *testing.B)    { benchmarkJsoniter(b, "instruments") }
-func BenchmarkJsoniterMarine_ik(b *testing.B)      { benchmarkJsoniter(b, "marine_ik") }
-func BenchmarkJsoniterMesh(b *testing.B)           { benchmarkJsoniter(b, "mesh") }
-func BenchmarkJsoniterMesh_pretty(b *testing.B)    { benchmarkJsoniter(b, "mesh.pretty") }
-func BenchmarkJsoniterNumbers(b *testing.B)        { benchmarkJsoniter(b, "numbers") }
-func BenchmarkJsoniterRandom(b *testing.B)         { benchmarkJsoniter(b, "random") }
-func BenchmarkJsoniterTwitter(b *testing.B)        { benchmarkJsoniter(b, "twitter") }
-func BenchmarkJsoniterTwitterescaped(b *testing.B) { benchmarkJsoniter(b, "twitterescaped") }
-func BenchmarkJsoniterUpdate_center(b *testing.B)  { benchmarkJsoniter(b, "update-center") }
 
 func BenchmarkSimdJsonApache_builds(b *testing.B)  { benchmarkSimdJson(b, "apache_builds") }
 func BenchmarkSimdJsonCanada(b *testing.B)         { benchmarkSimdJson(b, "canada") }
