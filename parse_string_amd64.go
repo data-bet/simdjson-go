@@ -30,7 +30,7 @@ func _parse_string_validate_only(src, maxStringSize, str_length, dst_length unsa
 //go:noescape
 func _parse_string(src, dst, pcurrent_string_buf_loc unsafe.Pointer) (res uint64)
 
-// parseStringSimdValidateOnly scans the string starting at buf[1] without writing
+// parseStringScan scans the string starting at buf[1] without writing
 // it out. It reports how many source bytes the string body occupies in srcLength
 // and how long its decoded form is in dstLength. The two are equal exactly when
 // the string holds no escapes, since every escape sequence decodes to fewer bytes
@@ -47,7 +47,7 @@ func _parse_string(src, dst, pcurrent_string_buf_loc unsafe.Pointer) (res uint64
 // after the scan and so has the least to hide the extra spills behind.
 //
 //go:noinline
-func parseStringSimdValidateOnly(buf []byte, maxStringSize, srcLength, dstLength *uint64) bool {
+func parseStringScan(buf []byte, maxStringSize, srcLength, dstLength *uint64) bool {
 
 	src := unsafe.Pointer(&buf[1]) // Use buf[1] in order to skip opening quote
 
@@ -56,7 +56,7 @@ func parseStringSimdValidateOnly(buf []byte, maxStringSize, srcLength, dstLength
 	return success != 0
 }
 
-// parseStringSimd decodes the string starting at buf[1] into the spare capacity of
+// parseStringCopy decodes the string starting at buf[1] into the spare capacity of
 // sb and reports how many bytes it wrote. The caller extends sb itself.
 //
 // The caller must have reserved room for the decoded string plus the 32 byte
@@ -67,7 +67,7 @@ func parseStringSimdValidateOnly(buf []byte, maxStringSize, srcLength, dstLength
 // header in the caller's registers. Reading it back through the pointer, right
 // after the assembly had stored into the same stack slot, was half the cost of this
 // function.
-func parseStringSimd(buf []byte, sb []byte) (size uint64, ok bool) {
+func parseStringCopy(buf []byte, sb []byte) (size uint64, ok bool) {
 
 	// Indexing the full-capacity slice panics rather than corrupting memory if
 	// the caller under-reserved.

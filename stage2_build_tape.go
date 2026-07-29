@@ -1,6 +1,3 @@
-//go:build !noasm && !appengine && gc
-// +build !noasm,!appengine,gc
-
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
  * Modifications copyright (c) 2026 DATA.BET
@@ -217,19 +214,19 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 		if start+int(maxStringSize)+32 >= cap(strs) {
 			start = pj.growStrings(maxStringSize+32, idx)
 		}
-		size, ok := parseStringSimd(buf, pj.Strings.B)
+		size, ok := parseStringCopy(buf, pj.Strings.B)
 		if !ok {
 			return false
 		}
 		pj.Strings.B = pj.Strings.B[:start+int(size)]
 		// One append rather than two: the tag and the length go on the tape together,
 		// which is what the number path already does.
-		pj.Tape = append(pj.Tape, uint64(STRINGBUFBIT+start)|(uint64('"')<<JSONTAGOFFSET), size)
+		pj.Tape = append(pj.Tape, (STRINGBUFBIT|uint64(start))|(uint64('"')<<JSONTAGOFFSET), size)
 		return true
 	}
 
 	srcLength := uint64(0)
-	if !parseStringSimdValidateOnly(buf, &maxStringSize, &srcLength, &size) {
+	if !parseStringScan(buf, &maxStringSize, &srcLength, &size) {
 		return false
 	}
 	// Every escape sequence decodes to fewer bytes than it occupies, so the two
@@ -249,18 +246,18 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 		start := pj.reserveStrings(size, idx)
 		// Capacity is reserved, so this append cannot reallocate.
 		pj.Strings.B = append(pj.Strings.B, buf[1:1+size]...)
-		tag = uint64(STRINGBUFBIT+start) | (uint64('"') << JSONTAGOFFSET)
+		tag = (STRINGBUFBIT | uint64(start)) | (uint64('"') << JSONTAGOFFSET)
 
 	default:
 		// Make sure we account for at least 32 bytes additional space due to
 		// the overshoot of the copy loop in _parse_string.
 		start := pj.reserveStrings(size+32, idx)
-		written, ok := parseStringSimd(buf, pj.Strings.B)
+		written, ok := parseStringCopy(buf, pj.Strings.B)
 		if !ok {
 			return false
 		}
 		pj.Strings.B = pj.Strings.B[:start+int(written)]
-		tag = uint64(STRINGBUFBIT+start) | (uint64('"') << JSONTAGOFFSET)
+		tag = (STRINGBUFBIT | uint64(start)) | (uint64('"') << JSONTAGOFFSET)
 		size = written
 	}
 	// tag and length go onto the tape together

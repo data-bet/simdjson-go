@@ -1,6 +1,3 @@
-//go:build !appengine && !noasm && gc
-// +build !appengine,!noasm,gc
-
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
  * Modifications copyright (c) 2026 DATA.BET
@@ -28,26 +25,15 @@ import (
 	"io"
 	"runtime"
 	"sync"
-
-	"github.com/klauspost/cpuid/v2"
 )
 
-var wantFeatures = cpuid.CombineFeatures(cpuid.AVX2, cpuid.CLMUL)
-
-// haveAVX512 selects the AVX-512 stage 1 pipeline over the AVX2 one. It is settled
-// once, here, rather than asked of cpuid on every call: the choice is the same for
-// the life of the process, and a test that wants the other pipeline has to set this
-// - taking the feature bit away from cpuid afterwards no longer changes anything.
-var haveAVX512 = cpuid.CPU.Has(cpuid.AVX512F)
-
-// SupportedCPU will return whether the CPU is supported.
-func SupportedCPU() bool {
-	return cpuid.CPU.HasAll(wantFeatures)
-}
+// SupportedCPU is defined per platform, in dispatch_amd64.go and dispatch_nosimd.go.
+// It reports whether this build can parse on this machine, which is now everywhere
+// except an amd64 build without AVX2 - see the comment on the amd64 one.
 
 func newInternalParsedJson(reuse *ParsedJson, opts []ParserOption) (*internalParsedJson, error) {
 	if !SupportedCPU() {
-		return nil, errors.New("Host CPU does not meet target specs")
+		return nil, errors.New("Host CPU does not meet target specs; build with -tags=noasm for the portable implementation")
 	}
 	var pj *internalParsedJson
 	if reuse != nil && reuse.internal != nil {
@@ -130,7 +116,7 @@ func ParseNDStream(r io.Reader, res chan<- Stream, reuse <-chan *ParsedJson) {
 		go func() {
 			res <- Stream{
 				Value: nil,
-				Error: fmt.Errorf("Host CPU does not meet target specs"),
+				Error: fmt.Errorf("Host CPU does not meet target specs; build with -tags=noasm for the portable implementation"),
 			}
 			close(res)
 		}()

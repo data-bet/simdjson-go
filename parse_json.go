@@ -1,6 +1,3 @@
-//go:build !noasm && !appengine && gc
-// +build !noasm,!appengine,gc
-
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
  * Modifications copyright (c) 2026 DATA.BET
@@ -94,7 +91,7 @@ func (pj *internalParsedJson) parseMessage(msg []byte, ndjson bool) (err error) 
 		pj.ndjson = 0
 	}
 
-	pj.buffersOffset = ^uint64(0)
+	pj.buffersOffset.Store(^uint64(0))
 
 	var errStage1 error
 

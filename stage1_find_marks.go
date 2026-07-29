@@ -1,6 +1,3 @@
-//go:build !noasm && !appengine && gc
-// +build !noasm,!appengine,gc
-
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
  * Modifications copyright (c) 2026 DATA.BET
@@ -20,9 +17,10 @@
 
 package simdjson
 
-import (
-	"sync/atomic"
-)
+// The loop below is the whole of stage 1 that does not depend on the machine. What
+// does is findStructuralBitsInSlice, which every platform supplies its own: see
+// dispatch_amd64.go and dispatch_nosimd.go. The state carried from one
+// call of it to the next is the same everywhere.
 
 var jsonMarkupTable = [256]bool{
 	'{': true,
@@ -70,7 +68,7 @@ func (pj *internalParsedJson) findStructuralIndices() bool {
 		if pj.async {
 			// The channel throttles stage 1 to indexSlots-2 buffers ahead, so the ring
 			// never catches up with a buffer stage 2 is still reading.
-			offset := atomic.AddUint64(&pj.buffersOffset, 1)
+			offset := pj.buffersOffset.Add(1)
 			index.indexes = &pj.buffers[offset%indexSlots]
 		} else {
 			index.indexes = pj.syncBuffer(round)
@@ -84,18 +82,10 @@ func (pj *internalParsedJson) findStructuralIndices() bool {
 			stripped_index = ^uint64(0)
 		}
 
-		var processed uint64
-		if haveAVX512 {
-			processed = find_structural_bits_in_slice_avx512(buf[:len(buf) & ^63], &prev_iter_ends_odd_backslash,
-				&prev_iter_inside_quote, &error_mask,
-				&prev_iter_ends_pseudo_pred,
-				index.indexes, &index.length, &carried, &position, pj.ndjson)
-		} else {
-			processed = find_structural_bits_in_slice(buf[:len(buf) & ^63], &prev_iter_ends_odd_backslash,
-				&prev_iter_inside_quote, &error_mask,
-				&prev_iter_ends_pseudo_pred,
-				index.indexes, &index.length, &carried, &position, pj.ndjson)
-		}
+		processed := findStructuralBitsInSlice(buf[:len(buf) & ^63], &prev_iter_ends_odd_backslash,
+			&prev_iter_inside_quote, &error_mask,
+			&prev_iter_ends_pseudo_pred,
+			index.indexes, &index.length, &carried, &position, pj.ndjson)
 
 		// Check if we have at most a single iteration of 64 bytes left, tag on to previous invocation
 		if uint64(len(buf))-processed <= 64 {
@@ -103,17 +93,10 @@ func (pj *internalParsedJson) findStructuralIndices() bool {
 			paddedBuf := [128]byte{}
 			copy(paddedBuf[:], buf[processed:])
 			paddedBytes := uint64(len(buf)) - processed
-			if haveAVX512 {
-				processed += find_structural_bits_in_slice_avx512(paddedBuf[:paddedBytes], &prev_iter_ends_odd_backslash,
-					&prev_iter_inside_quote, &error_mask,
-					&prev_iter_ends_pseudo_pred,
-					index.indexes, &index.length, &carried, &position, pj.ndjson)
-			} else {
-				processed += find_structural_bits_in_slice(paddedBuf[:paddedBytes], &prev_iter_ends_odd_backslash,
-					&prev_iter_inside_quote, &error_mask,
-					&prev_iter_ends_pseudo_pred,
-					index.indexes, &index.length, &carried, &position, pj.ndjson)
-			}
+			processed += findStructuralBitsInSlice(paddedBuf[:paddedBytes], &prev_iter_ends_odd_backslash,
+				&prev_iter_inside_quote, &error_mask,
+				&prev_iter_ends_pseudo_pred,
+				index.indexes, &index.length, &carried, &position, pj.ndjson)
 		}
 
 		if index.length == 0 { // No structural chars found, so error out

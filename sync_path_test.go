@@ -1,6 +1,3 @@
-//go:build !noasm && !appengine && gc
-// +build !noasm,!appengine,gc
-
 /*
  * Copyright (c) 2026 DATA.BET
  *

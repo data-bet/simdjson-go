@@ -23,10 +23,13 @@ package simdjson
 import (
 	"fmt"
 	"math/bits"
-	"strings"
 	"testing"
 )
 
+// The four masks stage 1 builds for one block of demo_json, spelled out. The portable
+// twin of this test is TestStage1FindMarksGeneric in stage1_find_marks_test.go and
+// asserts the same patterns, so the expectations are shared ground truth rather than
+// one implementation copied into the other.
 func TestStage1FindMarks(t *testing.T) {
 	if !SupportedCPU() {
 		t.SkipNow()
@@ -82,109 +85,6 @@ func TestStage1FindMarks(t *testing.T) {
 	structural_finalized := fmt.Sprintf("%064b", bits.Reverse64(structurals_mask))
 	if structural_finalized != testCases[0].structurals_finalized {
 		t.Errorf("TestStage1FindMarks: got: %s want: %s", structural_finalized, testCases[0].structurals_finalized)
-	}
-}
-
-func TestFindStructuralIndices(t *testing.T) {
-	if !SupportedCPU() {
-		t.SkipNow()
-	}
-	parsed := []string{
-		`{"Image":{"Width":800,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		` "Image":{"Width":800,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`        :{"Width":800,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`         {"Width":800,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`          "Width":800,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                 :800,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                  800,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                     ,"Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                      "Height":600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                              :600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                               600,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                  ,"Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                   "Title":"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                          :"View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                           "View from 15th Floor","Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                 ,"Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                  "Thumbnail":{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                             :{"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                              {"Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                               "Url":"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                    :"http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                     "http://www.example.com/image/481989943","Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                             ,"Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                              "Height":125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                      :125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                       125,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                          ,"Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                           "Width":100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                  :100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                   100},"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                      },"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                       ,"Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                        "Animated":false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                                  :false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                                   false,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                                        ,"IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                                         "IDs":[116,943,234,38793]}}`,
-		`                                                                                                                                                                              :[116,943,234,38793]}}`,
-		`                                                                                                                                                                               [116,943,234,38793]}}`,
-		`                                                                                                                                                                                116,943,234,38793]}}`,
-		`                                                                                                                                                                                   ,943,234,38793]}}`,
-		`                                                                                                                                                                                    943,234,38793]}}`,
-		`                                                                                                                                                                                       ,234,38793]}}`,
-		`                                                                                                                                                                                        234,38793]}}`,
-		`                                                                                                                                                                                           ,38793]}}`,
-		`                                                                                                                                                                                            38793]}}`,
-		`                                                                                                                                                                                                 ]}}`,
-		`                                                                                                                                                                                                  }}`,
-		`                                                                                                                                                                                                   }`,
-	}
-
-	pj := internalParsedJson{}
-	// Drives stage 1 on its own, so it wants the channel hand-off rather than the
-	// collect-into-a-slice path parseMessage uses for small inputs.
-	pj.async = true
-	pj.indexChans = make(chan indexChan, 16)
-
-	// No need to spawn go-routine since the channel is large enough
-	pj.Message = []byte(demo_json)
-	pj.findStructuralIndices()
-
-	ipos, pos := 0, ^uint64(0)
-	for ic := range pj.indexChans {
-		if ic.index == -1 {
-			break
-		}
-		for j := 0; j < ic.length; j++ {
-			pos += uint64((*ic.indexes)[j])
-			result := fmt.Sprintf("%s%s", strings.Repeat(" ", int(pos)), demo_json[pos:])
-			// fmt.Printf("`%s`,\n", result)
-			if result != parsed[ipos] {
-				t.Errorf("TestFindStructuralBits: got: %s want: %s", result, parsed[ipos])
-			}
-			ipos++
-		}
-	}
-}
-
-func BenchmarkStage1(b *testing.B) {
-	if !SupportedCPU() {
-		b.SkipNow()
-	}
-	msg := loadCompressed(b, "twitter")
-
-	b.SetBytes(int64(len(msg)))
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	pj := internalParsedJson{}
-	pj.async = true // stage 1 alone, so hand buffers over the channel
-	pj.Message = msg
-	for i := 0; i < b.N; i++ {
-		// Create new channel (large enough so we won't block)
-		pj.indexChans = make(chan indexChan, 128)
-		pj.findStructuralIndices()
 	}
 }
 

@@ -61,7 +61,7 @@ func compareStringParsers(t *testing.T, s string) {
 
 	var asmSrc, asmDst uint64
 	max := maxStringSize
-	asmOK := parseStringSimdValidateOnly(buf, &max, &asmSrc, &asmDst)
+	asmOK := parseStringScan(buf, &max, &asmSrc, &asmDst)
 
 	var genSrc, genDst uint64
 	max = maxStringSize
@@ -85,7 +85,7 @@ func compareStringParsers(t *testing.T, s string) {
 	asmBuf := make([]byte, 0, room)
 	genBuf := make([]byte, 0, room)
 
-	asmN, asmCopyOK := parseStringSimd(buf, asmBuf)
+	asmN, asmCopyOK := parseStringCopy(buf, asmBuf)
 	genN, genCopyOK := parseStringGeneric(buf, genBuf)
 
 	if asmCopyOK != genCopyOK {

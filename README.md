@@ -33,14 +33,30 @@ Additionally `simdjson-go` has the following features:
 
 ## Requirements
 
-`simdjson-go` has the following requirements for parsing:
+There are two implementations of the parser, and which one you get depends on the platform:
 
-A CPU with both AVX2 and CLMUL is required (Haswell from 2013 onwards should do for Intel, for AMD a Ryzen/EPYC CPU (Q1 2017) should be sufficient).
+| build | implementation |
+|---|---|
+| `amd64`, CPU with AVX2 and CLMUL | AVX2 assembly, and the AVX-512 variant where the CPU has AVX-512F |
+| `amd64`, CPU without AVX2 or CLMUL | none - `SupportedCPU()` is false and `Parse` returns an error |
+| any other platform, or `-tags=noasm`, or `gccgo` | portable Go |
+
+The portable implementation is a straight translation of the same algorithm and produces
+byte for byte identical output - the whole corpus has been checked, tape word for tape
+word. It is slower, since the step the vector units do - turning 64 bytes into the masks
+the rest of stage 1 works on - becomes a table lookup per byte. It is checked against the
+assembly by `stage1_generic_diff_amd64_test.go` and
+`parse_string_generic_diff_amd64_test.go`.
+
+A CPU with both AVX2 and CLMUL is required for the fast path (Haswell from 2013 onwards should do for Intel, for AMD a Ryzen/EPYC CPU (Q1 2017) should be sufficient).
 This can be checked using the provided [`SupportedCPU()`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#SupportedCPU) function.
 
-The package does not provide fallback for unsupported CPUs, but serialized data can be deserialized on an unsupported CPU.
+An `amd64` CPU older than that is the one case with no fallback in the default build.
+Building with `-tags=noasm` gives it the portable implementation. It is not selected
+automatically because the check would have to be made per string in the hottest part of
+stage 2, which measured at over 2% on string heavy documents for every other user.
 
-Using the `gccgo` will also always return unsupported CPU since it cannot compile assembly.
+Serialized data can be deserialized anywhere, on any CPU.
 
 ## Usage
 

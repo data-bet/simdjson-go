@@ -1,6 +1,3 @@
-//go:build !noasm && !appengine && gc
-// +build !noasm,!appengine,gc
-
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
  * Modifications copyright (c) 2026 DATA.BET
@@ -42,7 +39,7 @@ func TestDemoNdjson(t *testing.T) {
 		t.Errorf("TestDemoNdjson: got: %v want: nil", err)
 	}
 
-	verifyDemoNdjson(pj, t, 0)
+	verifyDemoNdjson(&pj, t, 0)
 }
 
 func TestNdjsonEmptyLines(t *testing.T) {
@@ -549,7 +546,7 @@ func TestParseString(t *testing.T) {
 			buf := []byte(fmt.Sprintf(`"%s"`, tt.str))
 			dest := make([]byte, 0, len(buf)+32 /* safety margin as parseString writes full AVX2 words */)
 
-			written, success := parseStringSimd(buf, dest)
+			written, success := parseStringCopy(buf, dest)
 			dest = dest[:written]
 
 			if success != tt.success {
@@ -580,7 +577,7 @@ func TestParseStringValidateOnly(t *testing.T) {
 
 			srcLength, dstLength := uint64(0), uint64(0)
 			l := uint64(len(buf))
-			success := parseStringSimdValidateOnly(buf, &l, &srcLength, &dstLength)
+			success := parseStringScan(buf, &l, &srcLength, &dstLength)
 
 			if success != tt.success {
 				t.Errorf("TestParseString() got = %v, want %v", success, tt.success)
@@ -614,8 +611,8 @@ func TestParseStringValidateOnlyBeyondBuffer(t *testing.T) {
 
 	srcLength, dstLength := uint64(0), uint64(0)
 	maxStringSize := uint64(64)
-	if parseStringSimdValidateOnly(buf, &maxStringSize, &srcLength, &dstLength) {
-		t.Errorf("parseStringSimdValidateOnly() = true, want false: scan ran past maxStringSize=%d", maxStringSize)
+	if parseStringScan(buf, &maxStringSize, &srcLength, &dstLength) {
+		t.Errorf("parseStringScan() = true, want false: scan ran past maxStringSize=%d", maxStringSize)
 	}
 }
 

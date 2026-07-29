@@ -66,7 +66,10 @@ func TestStage1PathsAgree(t *testing.T) {
 	if !haveAVX512 {
 		t.Skip("no AVX-512 on this CPU, so there is only one path to run")
 	}
-	// haveAVX512 is what selects the pipeline, so this is what has to be moved.
+	// haveAVX512 is read on the dispatch path and is settled at package
+	// initialisation, so this is what selects the path - taking the feature bit away
+	// from cpuid afterwards would not, and this test would quietly compare the
+	// AVX-512 path against itself.
 	defer func() { haveAVX512 = true }()
 
 	for _, tt := range testCases {

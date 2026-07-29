@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync/atomic"
 )
 
 const JSONVALUEMASK = 0xff_ffff_ffff_ffff
@@ -105,10 +106,14 @@ type internalParsedJson struct {
 	// Without the channel there is no back pressure, so every buffer stage 1 produces
 	// has to stay live at once. The ring only has indexSlots of them, so beyond that
 	// the synchronous path takes buffers from syncBufs instead - see syncBuffer.
-	async         bool
-	indexList     []indexChan
-	buffers       [indexSlots][indexSize]uint32
-	buffersOffset uint64
+	async     bool
+	indexList []indexChan
+	buffers   [indexSlots][indexSize]uint32
+	// buffersOffset is atomic.Uint64 rather than a plain uint64 with atomic.AddUint64:
+	// a 64-bit atomic needs 8 byte alignment, which a struct field only gets by luck on
+	// 32-bit platforms, and this file is compiled for them now that stage 1 is portable.
+	// The type carries the alignment guarantee with it.
+	buffersOffset atomic.Uint64
 	// syncBufs extends the ring for the synchronous path, which needs one buffer per
 	// round rather than one in flight. They are indexed by round and kept between
 	// parses, so a parser settles at the largest document it has seen and stops
