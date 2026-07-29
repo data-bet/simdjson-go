@@ -3,6 +3,7 @@
 
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -72,6 +73,15 @@ func peekSize(pj *internalParsedJson) uint64 {
 func parseString(pj *ParsedJson, idx uint64, maxStringSize uint64, needCopy bool) bool {
 	size := uint64(0)
 	buf := pj.Message[idx:]
+	// Clamp the scan bound to what is actually left in the message. The unsigned
+	// wrap-around also catches maxStringSize == 0, which peekSize returns when the
+	// next structural index has not been received yet: stage 1 keeps a trailing quote
+	// back for the next index buffer so that should not happen for a string, but a
+	// zero bound must never reach the assembly, which reads it as "no room at all"
+	// and fails immediately.
+	if maxStringSize-1 >= uint64(len(buf)) {
+		maxStringSize = uint64(len(buf))
+	}
 	// Make sure that we have at least one full YMM word available after maxStringSize into the buffer
 	if len(buf)-int(maxStringSize) < 64 {
 		if len(buf) > 512-64 { // only allocated if needed
