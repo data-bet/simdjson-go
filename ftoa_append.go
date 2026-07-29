@@ -49,7 +49,6 @@ func appendFloatF(dst []byte, val float64) []byte {
 type decimalSlice struct {
 	d      []byte
 	nd, dp int
-	neg    bool
 }
 
 // %f: -ddddddd.ddddd

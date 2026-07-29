@@ -18,14 +18,12 @@
 package simdjson
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math"
-	"runtime"
 	"sync"
 	"unsafe"
 
@@ -61,8 +59,6 @@ type Serializer struct {
 	stringWr     io.Writer
 	stringsTable [stringSize]uint32
 	stringBuf    []byte
-
-	maxBlockSize uint64
 }
 
 // NewSerializer will create and initialize a Serializer.
@@ -70,7 +66,6 @@ func NewSerializer() *Serializer {
 	initSerializerOnce.Do(initSerializer)
 	var s Serializer
 	s.CompressMode(CompressDefault)
-	s.maxBlockSize = 1 << 31
 	return &s
 }
 
@@ -113,83 +108,6 @@ func (s *Serializer) CompressMode(c CompressMode) {
 	default:
 		panic("unknown compression mode")
 	}
-}
-
-func serializeNDStream(dst io.Writer, in <-chan Stream, reuse chan<- *ParsedJson, concurrency int, comp CompressMode) error {
-	if concurrency <= 0 {
-		concurrency = (runtime.GOMAXPROCS(0) + 1) / 2
-	}
-	var wg sync.WaitGroup
-	wg.Add(concurrency)
-	type workload struct {
-		pj  *ParsedJson
-		dst chan []byte
-	}
-	var readCh = make(chan workload, concurrency)
-	var writeCh = make(chan chan []byte, concurrency)
-	dstPool := sync.Pool{
-		New: func() interface{} {
-			return make([]byte, 0, 64<<10)
-		},
-	}
-	for i := 0; i < concurrency; i++ {
-		go func() {
-			s := NewSerializer()
-			s.CompressMode(comp)
-			defer wg.Done()
-			for input := range readCh {
-				res := s.Serialize(dstPool.Get().([]byte)[:0], *input.pj)
-				input.dst <- res
-				select {
-				case reuse <- input.pj:
-				default:
-				}
-			}
-		}()
-	}
-	var writeErr error
-	var wwg sync.WaitGroup
-	wwg.Add(1)
-	go func() {
-		defer wwg.Done()
-		for block := range writeCh {
-			b := <-block
-			var n int
-			n, writeErr = dst.Write(b)
-			if n != len(b) {
-				writeErr = io.ErrShortWrite
-			}
-		}
-	}()
-	var readErr error
-	var rwg sync.WaitGroup
-	rwg.Add(1)
-	go func() {
-		defer rwg.Done()
-		defer close(readCh)
-		for block := range in {
-			if block.Error != nil {
-				readErr = block.Error
-			}
-			readCh <- workload{
-				pj:  block.Value,
-				dst: make(chan []byte, 0),
-			}
-		}
-	}()
-	rwg.Wait()
-	if readErr != nil {
-		wg.Wait()
-		close(writeCh)
-		wwg.Wait()
-		return readErr
-	}
-	// Read done, wait for workers...
-	wg.Wait()
-	close(writeCh)
-	// Wait for writer...
-	wwg.Wait()
-	return writeErr
 }
 
 const (
@@ -429,35 +347,6 @@ func (s *Serializer) Serialize(dst []byte, pj ParsedJson) []byte {
 	}
 
 	return dst
-}
-
-func (s *Serializer) splitBlocks(r io.Reader, out chan []byte) error {
-	br := bufio.NewReader(r)
-	defer close(out)
-	for {
-		if v, err := br.ReadByte(); err != nil {
-			return err
-		} else if v != 1 {
-			return errors.New("unknown version")
-		}
-
-		// Comp size
-		c, err := binary.ReadUvarint(br)
-		if err != nil {
-			return err
-		}
-		if c > s.maxBlockSize {
-			return errors.New("compressed block too big")
-		}
-		block := make([]byte, c)
-		n, err := io.ReadFull(br, block)
-		if err != nil {
-			return err
-		}
-		if n > 0 {
-			out <- block
-		}
-	}
 }
 
 // Deserialize the content in src.

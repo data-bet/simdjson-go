@@ -1120,21 +1120,8 @@ func (pj *ParsedJson) write_tape(val uint64, c byte) {
 	pj.Tape = append(pj.Tape, val|(uint64(c)<<56))
 }
 
-// writeTapeTagVal will write a tag with no embedded value and a value to the tape.
-func (pj *ParsedJson) writeTapeTagVal(tag Tag, val uint64) {
-	pj.Tape = append(pj.Tape, uint64(tag)<<56, val)
-}
-
 func (pj *ParsedJson) writeTapeTagValFlags(id, val uint64) {
 	pj.Tape = append(pj.Tape, id, val)
-}
-
-func (pj *ParsedJson) write_tape_s64(val int64) {
-	pj.writeTapeTagVal(TagInteger, uint64(val))
-}
-
-func (pj *ParsedJson) write_tape_double(d float64) {
-	pj.writeTapeTagVal(TagFloat, math.Float64bits(d))
 }
 
 func (pj *ParsedJson) annotate_previousloc(saved_loc uint64, val uint64) {

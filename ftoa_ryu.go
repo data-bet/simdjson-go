@@ -140,7 +140,6 @@ func mulByLog10Log2(x int) int {
 // represented by the input float64 or float32.
 func computeBounds(mant uint64, exp int) (lower, central, upper uint64, e2 int) {
 	const mantbits = 52
-	const expbits = 11
 	const bias = -1023
 	if mant != 1<<mantbits || exp == bias+1-int(mantbits) {
 		// regular case (or denormals)
@@ -281,35 +280,6 @@ func ryuDigits32(d *decimalSlice, lower, central, upper uint32,
 	}
 	d.nd = endindex + 1
 	d.dp = d.nd + trimmed
-}
-
-// mult64bitPow10 takes a floating-point input with a 25-bit
-// mantissa and multiplies it with 10^q. The resulting mantissa
-// is m*P >> 57 where P is a 64-bit element of the detailedPowersOfTen tables.
-// It is typically 31 or 32-bit wide.
-// The returned boolean is true if all trimmed bits were zero.
-//
-// That is:
-//
-//	m*2^e2 * round(10^q) = resM * 2^resE + ε
-//	exact = ε == 0
-func mult64bitPow10(m uint32, e2, q int) (resM uint32, resE int, exact bool) {
-	if q == 0 {
-		// P == 1<<63
-		return m << 6, e2 - 6, true
-	}
-	if q < detailedPowersOfTenMinExp10 || detailedPowersOfTenMaxExp10 < q {
-		// This never happens due to the range of float32/float64 exponent
-		panic("mult64bitPow10: power of 10 is out of range")
-	}
-	pow := detailedPowersOfTen[q-detailedPowersOfTenMinExp10][1]
-	if q < 0 {
-		// Inverse powers of ten must be rounded up.
-		pow += 1
-	}
-	hi, lo := bits.Mul64(uint64(m), pow)
-	e2 += mulByLog10Log2(q) - 63 + 57
-	return uint32(hi<<7 | lo>>57), e2, lo<<7 == 0
 }
 
 // mult128bitPow10 takes a floating-point input with a 55-bit
