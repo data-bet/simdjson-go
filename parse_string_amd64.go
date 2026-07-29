@@ -30,20 +30,29 @@ func _parse_string_validate_only(src, maxStringSize, str_length, dst_length unsa
 //go:noescape
 func _parse_string(src, dst, pcurrent_string_buf_loc unsafe.Pointer) (res uint64)
 
-// parseStringSimdValidateOnly scans the string starting at buf[1] without writing it
-// out and reports the decoded length in dstLength.
+// parseStringSimdValidateOnly scans the string starting at buf[1] without writing
+// it out. It reports how many source bytes the string body occupies in srcLength
+// and how long its decoded form is in dstLength. The two are equal exactly when
+// the string holds no escapes, since every escape sequence decodes to fewer bytes
+// than it occupies.
 //
 // maxStringSize bounds the scan: the assembly stops looking that many bytes past
-// buf[1] and fails if the closing quote has not turned up by then. It must be
-// non-zero, since a zero bound reads as "no room at all" and fails immediately.
-func parseStringSimdValidateOnly(buf []byte, maxStringSize, dstLength *uint64, needCopy *bool) bool {
+// buf[1] and returns failure if the closing quote has not been found by then. It
+// must be non-zero, since the assembly treats a zero bound as "no room at all"
+// and fails immediately - see parseString.
+//
+// Kept out of line on purpose. It is small enough to inline, but doing so leaves
+// more live across the assembly call inside parseString, which measures as a
+// regression on strings that need no copying - the case that does the least work
+// after the scan and so has the least to hide the extra spills behind.
+//
+//go:noinline
+func parseStringSimdValidateOnly(buf []byte, maxStringSize, srcLength, dstLength *uint64) bool {
 
 	src := unsafe.Pointer(&buf[1]) // Use buf[1] in order to skip opening quote
-	src_length := uint64(0)
 
-	success := _parse_string_validate_only(src, unsafe.Pointer(maxStringSize), unsafe.Pointer(&src_length), unsafe.Pointer(dstLength))
+	success := _parse_string_validate_only(src, unsafe.Pointer(maxStringSize), unsafe.Pointer(srcLength), unsafe.Pointer(dstLength))
 
-	*needCopy = *needCopy || src_length != *dstLength
 	return success != 0
 }
 

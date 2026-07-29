@@ -94,6 +94,9 @@ type internalParsedJson struct {
 	buffersOffset         uint64
 	ndjson                uint64
 	copyStrings           bool
+	// padBuf holds a zero-tailed copy of a string that sits too close to the end
+	// of the message for the scanner to read whole words past it. See parseString.
+	padBuf []byte
 }
 
 // Iter returns a new Iter.

@@ -576,17 +576,22 @@ func TestParseStringValidateOnly(t *testing.T) {
 			// enclose test string in quotes (as validated by stage 1)
 			buf := []byte(fmt.Sprintf(`"%s"`, tt.str))
 
-			dst_length := uint64(0)
-			need_copy := false
+			srcLength, dstLength := uint64(0), uint64(0)
 			l := uint64(len(buf))
-			success := parseStringSimdValidateOnly(buf, &l, &dst_length, &need_copy)
+			success := parseStringSimdValidateOnly(buf, &l, &srcLength, &dstLength)
 
 			if success != tt.success {
 				t.Errorf("TestParseString() got = %v, want %v", success, tt.success)
 			}
-			if success && !need_copy {
-				if dst_length != uint64(len(tt.want)) {
-					t.Errorf("TestParseString() got = %d, want %d", dst_length, len(tt.want))
+			if success {
+				if dstLength != uint64(len(tt.want)) {
+					t.Errorf("TestParseString() got = %d, want %d", dstLength, len(tt.want))
+				}
+				// srcLength counts the bytes the body occupies in the message, so it
+				// exceeds dstLength exactly when the string carries escapes.
+				if wantEscapes := srcLength != dstLength; wantEscapes != (len(tt.str) != len(tt.want)) {
+					t.Errorf("TestParseString() srcLength = %d, dstLength = %d for %q -> %q",
+						srcLength, dstLength, tt.str, tt.want)
 				}
 			}
 		})
@@ -605,10 +610,9 @@ func TestParseStringValidateOnlyBeyondBuffer(t *testing.T) {
 	buf[0] = '"'
 	buf[200] = '"'
 
-	dstLength := uint64(0)
-	needCopy := false
+	srcLength, dstLength := uint64(0), uint64(0)
 	maxStringSize := uint64(64)
-	if parseStringSimdValidateOnly(buf, &maxStringSize, &dstLength, &needCopy) {
+	if parseStringSimdValidateOnly(buf, &maxStringSize, &srcLength, &dstLength) {
 		t.Errorf("parseStringSimdValidateOnly() = true, want false: scan ran past maxStringSize=%d", maxStringSize)
 	}
 }

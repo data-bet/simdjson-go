@@ -88,7 +88,26 @@ func peekSize(pj *internalParsedJson) uint64 {
 	return uint64(pj.indexesChan.indexes[pj.indexesChan.index])
 }
 
-func parseString(pj *ParsedJson, idx uint64, maxStringSize uint64, needCopy bool) bool {
+// reserveStrings makes room for n more bytes in the string buffer and returns the
+// offset the caller may start writing at. Callers handing the buffer to assembly
+// must include the 32 byte overshoot of the copy loop in n.
+func (pj *ParsedJson) reserveStrings(n uint64) int {
+	strs := pj.Strings.B
+	requiredLen := uint64(len(strs)) + n
+	if requiredLen >= uint64(cap(strs)) {
+		newSize := uint64(cap(strs) * 2)
+		if newSize < requiredLen {
+			newSize = requiredLen + n // add n once more to account for further space
+		}
+		grown := make([]byte, len(strs), newSize)
+		copy(grown, strs)
+		pj.Strings.B = grown
+	}
+	return len(pj.Strings.B)
+}
+
+func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool {
+	needCopy := pj.copyStrings
 	size := uint64(0)
 	buf := pj.Message[idx:]
 	// Clamp the scan bound to what is actually left in the message. The unsigned
@@ -100,38 +119,51 @@ func parseString(pj *ParsedJson, idx uint64, maxStringSize uint64, needCopy bool
 	if maxStringSize-1 >= uint64(len(buf)) {
 		maxStringSize = uint64(len(buf))
 	}
-	// Make sure that we have at least one full YMM word available after maxStringSize into the buffer
+
+	// The scan reads a whole YMM word at a time and only re-checks its bound
+	// between words, so it can look up to 31 bytes past maxStringSize. When the
+	// message does not have that much left, hand it a padded copy instead. The
+	// tail must be zeroed: a stray quote there would be taken for the closing one.
+	// Only maxStringSize+64 bytes are ever touched, so that is all we copy, and the
+	// buffer is kept on the parser to be reused by later strings.
 	if len(buf)-int(maxStringSize) < 64 {
-		if len(buf) > 512-64 { // only allocated if needed
-			paddedBuf := make([]byte, len(buf)+64)
-			copy(paddedBuf, buf)
-			buf = paddedBuf
-		} else {
-			paddedBuf := [512]byte{}
-			copy(paddedBuf[:], buf)
-			buf = paddedBuf[:]
+		need := int(maxStringSize) + 64
+		if cap(pj.padBuf) < need {
+			pj.padBuf = make([]byte, need)
 		}
+		padded := pj.padBuf[:need]
+		clear(padded[copy(padded, buf):])
+		buf = padded
 	}
-	if !parseStringSimdValidateOnly(buf, &maxStringSize, &size, &needCopy) {
+	srcLength := uint64(0)
+	if !parseStringSimdValidateOnly(buf, &maxStringSize, &srcLength, &size) {
 		return false
 	}
-	if !needCopy {
+	// Every escape sequence decodes to fewer bytes than it occupies, so the two
+	// lengths agree exactly when the string holds no escapes at all.
+	hasEscapes := srcLength != size
+
+	switch {
+	case !needCopy && !hasEscapes:
+		// The message itself already holds the decoded form.
 		pj.write_tape(idx+1, '"')
-	} else {
+
+	case !hasEscapes:
+		// Nothing to decode, so skip the second pass over the string: it would
+		// only copy these bytes across one YMM word at a time, and the scan above
+		// has already established both the length and the validity.
+		start := pj.reserveStrings(size)
+		// Capacity is reserved, so this append cannot reallocate.
+		pj.Strings.B = append(pj.Strings.B, buf[1:1+size]...)
+		pj.write_tape(uint64(STRINGBUFBIT+start), '"')
+
+	default:
 		// Make sure we account for at least 32 bytes additional space due to
-		strs := pj.Strings.B
-		requiredLen := uint64(len(strs)) + size + 32
-		if requiredLen >= uint64(cap(strs)) {
-			newSize := uint64(cap(strs) * 2)
-			if newSize < requiredLen {
-				newSize = requiredLen + size // add size once more to account for further space
-			}
-			strs = make([]byte, len(strs), newSize)
-			copy(strs, pj.Strings.B)
-			pj.Strings.B = strs
+		// the overshoot of the copy loop in _parse_string.
+		start := pj.reserveStrings(size + 32)
+		if !parseStringSimd(buf, &pj.Strings.B) {
+			return false
 		}
-		start := len(strs)
-		_ = parseStringSimd(buf, &pj.Strings.B) // We can safely ignore the result since we validate above
 		pj.write_tape(uint64(STRINGBUFBIT+start), '"')
 		size = uint64(len(pj.Strings.B) - start)
 	}
@@ -264,7 +296,7 @@ object_begin:
 	}
 	switch buf[idx] {
 	case '"':
-		if !parseString(&pj.ParsedJson, idx, peekSize(pj), pj.copyStrings) {
+		if !pj.parseString(idx, peekSize(pj)) {
 			goto fail
 		}
 		goto object_key_state
@@ -286,7 +318,7 @@ object_key_state:
 	}
 	switch buf[idx] {
 	case '"':
-		if !parseString(&pj.ParsedJson, idx, peekSize(pj), pj.copyStrings) {
+		if !pj.parseString(idx, peekSize(pj)) {
 			goto fail
 		}
 
@@ -351,7 +383,7 @@ objectContinue:
 		if buf[idx] != '"' {
 			goto fail
 		}
-		if !parseString(&pj.ParsedJson, idx, peekSize(pj), pj.copyStrings) {
+		if !pj.parseString(idx, peekSize(pj)) {
 			goto fail
 		}
 		goto object_key_state
@@ -397,7 +429,7 @@ mainArraySwitch:
 	// on paths that can accept a close square brace (post-, and at start)
 	switch buf[idx] {
 	case '"':
-		if !parseString(&pj.ParsedJson, idx, peekSize(pj), pj.copyStrings) {
+		if !pj.parseString(idx, peekSize(pj)) {
 			goto fail
 		}
 	case 't':
