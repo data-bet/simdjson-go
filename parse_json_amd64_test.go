@@ -549,7 +549,8 @@ func TestParseString(t *testing.T) {
 			buf := []byte(fmt.Sprintf(`"%s"`, tt.str))
 			dest := make([]byte, 0, len(buf)+32 /* safety margin as parseString writes full AVX2 words */)
 
-			success := parseStringSimd(buf, &dest)
+			written, success := parseStringSimd(buf, dest)
+			dest = dest[:written]
 
 			if success != tt.success {
 				t.Errorf("TestParseString() got = %v, want %v", success, tt.success)

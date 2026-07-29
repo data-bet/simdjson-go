@@ -123,7 +123,19 @@ func (pj *internalParsedJson) pushScope(retAddress uint64) bool {
 // must include the 32 byte overshoot of the copy loop in n.
 // idx is how far into the message the value being stored starts, which lets the
 // growth extrapolate the document's string density instead of guessing.
+//
+// Split so that the check is small enough to inline into the string path, where it
+// runs once per string and almost never finds anything to do.
 func (pj *ParsedJson) reserveStrings(n, idx uint64) int {
+	strs := pj.Strings.B
+	if len(strs)+int(n) < cap(strs) {
+		return len(strs)
+	}
+	return pj.growStrings(n, idx)
+}
+
+//go:noinline
+func (pj *ParsedJson) growStrings(n, idx uint64) int {
 	strs := pj.Strings.B
 	requiredLen := uint64(len(strs)) + n
 	if requiredLen >= uint64(cap(strs)) {
@@ -197,12 +209,22 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 		//
 		// The bound serves instead: the decoded form is never longer than the source,
 		// which cannot reach past the next structural character.
-		start := pj.reserveStrings(maxStringSize+32, idx)
-		if !parseStringSimd(buf, &pj.Strings.B) {
+		// The reservation is written out rather than left to reserveStrings, which
+		// comes one unit over the inlining budget: this runs once per string and
+		// almost never has anything to do.
+		strs := pj.Strings.B
+		start := len(strs)
+		if start+int(maxStringSize)+32 >= cap(strs) {
+			start = pj.growStrings(maxStringSize+32, idx)
+		}
+		size, ok := parseStringSimd(buf, pj.Strings.B)
+		if !ok {
 			return false
 		}
-		pj.write_tape(uint64(STRINGBUFBIT+start), '"')
-		pj.Tape = append(pj.Tape, uint64(len(pj.Strings.B)-start))
+		pj.Strings.B = pj.Strings.B[:start+int(size)]
+		// One append rather than two: the tag and the length go on the tape together,
+		// which is what the number path already does.
+		pj.Tape = append(pj.Tape, uint64(STRINGBUFBIT+start)|(uint64('"')<<JSONTAGOFFSET), size)
 		return true
 	}
 
@@ -214,10 +236,11 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 	// lengths agree exactly when the string holds no escapes at all.
 	hasEscapes := srcLength != size
 
+	var tag uint64
 	switch {
 	case !needCopy && !hasEscapes:
 		// The message itself already holds the decoded form.
-		pj.write_tape(idx+1, '"')
+		tag = (idx + 1) | (uint64('"') << JSONTAGOFFSET)
 
 	case !hasEscapes:
 		// Nothing to decode, so skip the second pass over the string: it would
@@ -226,20 +249,22 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 		start := pj.reserveStrings(size, idx)
 		// Capacity is reserved, so this append cannot reallocate.
 		pj.Strings.B = append(pj.Strings.B, buf[1:1+size]...)
-		pj.write_tape(uint64(STRINGBUFBIT+start), '"')
+		tag = uint64(STRINGBUFBIT+start) | (uint64('"') << JSONTAGOFFSET)
 
 	default:
 		// Make sure we account for at least 32 bytes additional space due to
 		// the overshoot of the copy loop in _parse_string.
 		start := pj.reserveStrings(size+32, idx)
-		if !parseStringSimd(buf, &pj.Strings.B) {
+		written, ok := parseStringSimd(buf, pj.Strings.B)
+		if !ok {
 			return false
 		}
-		pj.write_tape(uint64(STRINGBUFBIT+start), '"')
-		size = uint64(len(pj.Strings.B) - start)
+		pj.Strings.B = pj.Strings.B[:start+int(written)]
+		tag = uint64(STRINGBUFBIT+start) | (uint64('"') << JSONTAGOFFSET)
+		size = written
 	}
-	// put length onto the tape
-	pj.Tape = append(pj.Tape, size)
+	// tag and length go onto the tape together
+	pj.Tape = append(pj.Tape, tag, size)
 	return true
 }
 

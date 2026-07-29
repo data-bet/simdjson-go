@@ -56,16 +56,21 @@ func parseStringSimdValidateOnly(buf []byte, maxStringSize, srcLength, dstLength
 	return success != 0
 }
 
-// parseStringSimd decodes the string starting at buf[1] and appends it to *stringbuf.
+// parseStringSimd decodes the string starting at buf[1] into the spare capacity of
+// sb and reports how many bytes it wrote. The caller extends sb itself.
 //
-// The caller must have reserved spare capacity for the decoded string plus the 32 byte
-// overshoot of the copy loop: the assembly writes straight into the existing backing
-// array, so the slice must never have to be reallocated.
-func parseStringSimd(buf []byte, stringbuf *[]byte) bool {
+// The caller must have reserved room for the decoded string plus the 32 byte
+// overshoot of the copy loop; the assembly writes straight into the existing
+// backing array, so the slice must never have to be reallocated.
+//
+// Returning the length rather than writing back through a *[]byte keeps the slice
+// header in the caller's registers. Reading it back through the pointer, right
+// after the assembly had stored into the same stack slot, was half the cost of this
+// function.
+func parseStringSimd(buf []byte, sb []byte) (size uint64, ok bool) {
 
-	sb := *stringbuf
-	// Indexing the full-capacity slice panics rather than corrupting memory if the
-	// caller under-reserved.
+	// Indexing the full-capacity slice panics rather than corrupting memory if
+	// the caller under-reserved.
 	dst := unsafe.Pointer(&sb[:cap(sb)][len(sb)])
 	stringBufLoc := dst
 
@@ -73,7 +78,5 @@ func parseStringSimd(buf []byte, stringbuf *[]byte) bool {
 
 	res := _parse_string(src, dst, unsafe.Pointer(&stringBufLoc))
 
-	*stringbuf = sb[:len(sb)+int(uintptr(stringBufLoc)-uintptr(dst))]
-
-	return res != 0
+	return uint64(uintptr(stringBufLoc) - uintptr(dst)), res != 0
 }
