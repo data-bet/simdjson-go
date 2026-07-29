@@ -187,3 +187,38 @@ func BenchmarkStage1(b *testing.B) {
 		pj.findStructuralIndices()
 	}
 }
+
+// BenchmarkStage1AVX2 runs stage 1 over the corpus with the AVX-512 pipeline switched
+// off, which is the only way to measure the AVX2 assembly on a machine that has both.
+// Without it a change to the AVX2 path cannot be timed on the hardware most likely to
+// be developing it, while being what most CPUs in the field will actually run.
+//
+// It measures stage 1 alone rather than a whole parse, so a few percent there is not
+// swamped by stage 2.
+func BenchmarkStage1AVX2(b *testing.B) {
+	if !SupportedCPU() {
+		b.SkipNow()
+	}
+	was := haveAVX512
+	haveAVX512 = false
+	defer func() { haveAVX512 = was }()
+
+	for _, tt := range testCases {
+		msg := loadCompressed(b, tt.name)
+		b.Run(tt.name, func(b *testing.B) {
+			pj := &internalParsedJson{}
+			pj.copyStrings = false
+			b.SetBytes(int64(len(msg)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				pj.Message = msg
+				pj.initialize(len(msg))
+				pj.async = false
+				pj.ndjson = 0
+				if !pj.findStructuralIndices() {
+					b.Fatal("stage 1 rejected the document")
+				}
+			}
+		})
+	}
+}

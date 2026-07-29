@@ -16,15 +16,18 @@ TEXT ·_find_newline_delimiters(SB), 7, $0
 	VZEROUPPER
 	RET
 
+// Y0 to Y2 rather than Y10 and Y11. Called from the middle of the loop in
+// find_structural_bits_amd64.s, where Y10 upwards hold constants that have to survive
+// the whole slice; Y0 to Y3 are the scratch registers there.
 TEXT ·__find_newline_delimiters(SB), 7, $0
 	MOVQ         $0x0a, BX // get newline
-	MOVQ         BX, X11
-	VPBROADCASTB X11, Y11
+	MOVQ         BX, X2
+	VPBROADCASTB X2, Y2
 
-	VPCMPEQB  Y8, Y11, Y10
-	VPCMPEQB  Y9, Y11, Y11
-	VPMOVMSKB Y10, BX
-	VPMOVMSKB Y11, CX
+	VPCMPEQB  Y8, Y2, Y0
+	VPCMPEQB  Y9, Y2, Y1
+	VPMOVMSKB Y0, BX
+	VPMOVMSKB Y1, CX
 	SHLQ      $32, CX
 	ORQ       CX, BX       // BX is resulting mask of newline chars
 	ANDNQ     BX, DX, BX   // clear out newline delimiters enclosed in quotes

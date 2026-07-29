@@ -49,47 +49,53 @@ TEXT ·_find_quote_mask_and_bits(SB), $0-48
 	VMOVDQU (DI), Y8     // load low 32-bytes
 	VMOVDQU 0x20(DI), Y9 // load high 32-bytes
 
+	CALL ·__init_quote_mask_and_bits_avx2(SB)
 	CALL ·__find_quote_mask_and_bits(SB)
+	MOVQ AVX2_QUOTEBITS, (R8)
 
 	VZEROUPPER
 	MOVQ AX, quote_mask+40(FP)
 	RET
 
-TEXT ·__find_quote_mask_and_bits(SB), $0
-	LEAQ LCDATA1<>(SB), R10
+// The three constants, and the register the quote bits come back in rather than being
+// written to the caller's memory and read straight back. See the register map in
+// find_structural_bits_amd64.s.
 
-	VMOVDQA    Y8, Y0         // vmovdqu    ymm0, yword [rdi]
-	VMOVDQA    Y9, Y1         // vmovdqu    ymm1, yword [rsi]
-	VMOVDQA    (R10), Y2      // vmovdqa    ymm2, yword 0[rbp] /* [rip + LCPI0_0] */
-	VPCMPEQB   Y2, Y0, Y3     // vpcmpeqb    ymm3, ymm0, ymm2
-	VPMOVMSKB  Y3, AX         // vpmovmskb    eax, ymm3
-	VPCMPEQB   Y2, Y1, Y2     // vpcmpeqb    ymm2, ymm1, ymm2
-	VPMOVMSKB  Y2, SI         // vpmovmskb    esi, ymm2
-	SHLQ       $32, SI        // shl    rsi, 32
-	ORQ        AX, SI         // or    rsi, rax
-	NOTQ       DX             // not    rdx
-	ANDQ       SI, DX         // and    rdx, rsi
-	MOVQ       DX, (R8)       // mov    qword [r8], rdx
-	VMOVQ      DX, X2         // vmovq    xmm2, rdx
-	VPCMPEQD   X3, X3, X3     // vpcmpeqd    xmm3, xmm3, xmm3
-	VPCLMULQDQ $0, X3, X2, X2 // vpclmulqdq    xmm2, xmm2, xmm3, 0
-	VMOVQ      X2, AX         // vmovq    rax, xmm2
-	XORQ       (CX), AX       // xor    rax, qword [rcx]
-	VMOVDQA    0x40(R10), Y2  // vmovdqa    ymm2, yword 32[rbp] /* [rip + LCPI0_1] */
-	VPXOR      Y2, Y0, Y0     // vpxor    ymm0, ymm0, ymm2
-	VMOVDQA    0x80(R10), Y3  // vmovdqa    ymm3, yword 64[rbp] /* [rip + LCPI0_2] */
-	VPCMPGTB   Y0, Y3, Y0     // vpcmpgtb    ymm0, ymm3, ymm0
-	VPMOVMSKB  Y0, DX         // vpmovmskb    edx, ymm0
-	VPXOR      Y2, Y1, Y0     // vpxor    ymm0, ymm1, ymm2
-	VPCMPGTB   Y0, Y3, Y0     // vpcmpgtb    ymm0, ymm3, ymm0
-	VPMOVMSKB  Y0, SI         // vpmovmskb    esi, ymm0
-	SHLQ       $32, SI        // shl    rsi, 32
-	ORQ        DX, SI         // or    rsi, rdx
-	ANDQ       AX, SI         // and    rsi, rax
-	ORQ        SI, (R9)       // or    qword [r9], rsi
-	MOVQ       AX, DX         // mov    rdx, rax
-	SARQ       $63, DX        // sar    rdx, 63
-	MOVQ       DX, (CX)       // mov    qword [rcx], rdx
+TEXT ·__init_quote_mask_and_bits_avx2(SB), $0
+	LEAQ    LCDATA1<>(SB), R10
+	VMOVDQU 0x00(R10), QMAB_CONST1_AVX2
+	VMOVDQU 0x40(R10), QMAB_CONST2_AVX2
+	VMOVDQU 0x80(R10), QMAB_CONST3_AVX2
+	RET
+
+TEXT ·__find_quote_mask_and_bits(SB), $0
+	VPCMPEQB   QMAB_CONST1_AVX2, Y8, Y0 // vpcmpeqb    ymm3, ymm0, ymm2
+	VPMOVMSKB  Y0, AX                   // vpmovmskb    eax, ymm3
+	VPCMPEQB   QMAB_CONST1_AVX2, Y9, Y1 // vpcmpeqb    ymm2, ymm1, ymm2
+	VPMOVMSKB  Y1, SI                   // vpmovmskb    esi, ymm2
+	SHLQ       $32, SI                  // shl    rsi, 32
+	ORQ        AX, SI                   // or    rsi, rax
+	NOTQ       DX                       // not    rdx
+	ANDQ       SI, DX                   // and    rdx, rsi
+	MOVQ       DX, AVX2_QUOTEBITS
+	VMOVQ      DX, X2                   // vmovq    xmm2, rdx
+	VPCMPEQD   X3, X3, X3               // vpcmpeqd    xmm3, xmm3, xmm3
+	VPCLMULQDQ $0, X3, X2, X2           // vpclmulqdq    xmm2, xmm2, xmm3, 0
+	VMOVQ      X2, AX                   // vmovq    rax, xmm2
+	XORQ       (CX), AX                 // xor    rax, qword [rcx]
+	VPXOR      QMAB_CONST2_AVX2, Y8, Y0 // vpxor    ymm0, ymm0, ymm2
+	VPCMPGTB   Y0, QMAB_CONST3_AVX2, Y0 // vpcmpgtb    ymm0, ymm3, ymm0
+	VPMOVMSKB  Y0, DX                   // vpmovmskb    edx, ymm0
+	VPXOR      QMAB_CONST2_AVX2, Y9, Y1 // vpxor    ymm0, ymm1, ymm2
+	VPCMPGTB   Y1, QMAB_CONST3_AVX2, Y1 // vpcmpgtb    ymm0, ymm3, ymm0
+	VPMOVMSKB  Y1, SI                   // vpmovmskb    esi, ymm0
+	SHLQ       $32, SI                  // shl    rsi, 32
+	ORQ        DX, SI                   // or    rsi, rdx
+	ANDQ       AX, SI                   // and    rsi, rax
+	ORQ        SI, (R9)                 // or    qword [r9], rsi
+	MOVQ       AX, DX                   // mov    rdx, rax
+	SARQ       $63, DX                  // sar    rdx, 63
+	MOVQ       DX, (CX)                 // mov    qword [rcx], rdx
 	RET
 
 TEXT ·_find_quote_mask_and_bits_avx512(SB), $0-48

@@ -57,58 +57,74 @@ GLOBL LCDATA1<>(SB), 8, $320
 TEXT ·_find_whitespace_and_structurals(SB), $0-24
 
 	MOVQ input+0(FP), DI
-	MOVQ whitespace+8(FP), DX
-	MOVQ structurals+16(FP), CX
 
 	VMOVDQU (DI), Y8     // load low 32-bytes
 	VMOVDQU 0x20(DI), Y9 // load high 32-bytes
 
+	CALL ·__init_whitespace_and_structurals_avx2(SB)
 	CALL ·__find_whitespace_and_structurals(SB)
+
+	// The pointers are re-read rather than held across the call: the routine uses
+	// CX and DX as scratch, and only the two mask registers come back.
+	MOVQ whitespace+8(FP), DX
+	MOVQ structurals+16(FP), CX
+	MOVQ AVX2_WHITESPACE, (DX)
+	MOVQ AVX2_STRUCTURALS, (CX)
 
 	VZEROUPPER
 	RET
 
-TEXT ·__find_whitespace_and_structurals(SB), $0
-	LEAQ LCDATA1<>(SB), R8
+// The five constants and the zero register, plus the two registers the masks come back
+// in. Those two are the ones __finalize_structurals wants them in, so the fused loop in
+// find_structural_bits_amd64.s hands them straight over instead of writing them to the
+// caller's memory and reading them back. See the register map over there.
 
-	VMOVDQA   Y8, Y0        // vmovdqu    ymm0, yword [rdi]
-	VMOVDQA   Y9, Y1        // vmovdqu    ymm1, yword [rsi]
-	VMOVDQA   (R8), Y2      // vmovdqa    ymm2, yword 0[rbp] /* [rip + LCPI0_0] */
-	VPSHUFB   Y0, Y2, Y3    // vpshufb    ymm3, ymm2, ymm0
-	VPSRLD    $4, Y0, Y0    // vpsrld    ymm0, ymm0, 4
-	VMOVDQA   0x40(R8), Y4  // vmovdqa    ymm4, yword 32[rbp] /* [rip + LCPI0_1] */
-	VPAND     Y4, Y0, Y0    // vpand    ymm0, ymm0, ymm4
-	VMOVDQA   0x80(R8), Y5  // vmovdqa    ymm5, yword 64[rbp] /* [rip + LCPI0_2] */
-	VPSHUFB   Y0, Y5, Y0    // vpshufb    ymm0, ymm5, ymm0
-	VPAND     Y3, Y0, Y0    // vpand    ymm0, ymm0, ymm3
-	VPSHUFB   Y1, Y2, Y2    // vpshufb    ymm2, ymm2, ymm1
-	VPSRLD    $4, Y1, Y1    // vpsrld    ymm1, ymm1, 4
-	VPAND     Y4, Y1, Y1    // vpand    ymm1, ymm1, ymm4
-	VPSHUFB   Y1, Y5, Y1    // vpshufb    ymm1, ymm5, ymm1
-	VPAND     Y2, Y1, Y1    // vpand    ymm1, ymm1, ymm2
-	VMOVDQA   0xc0(R8), Y2  // vmovdqa    ymm2, yword 96[rbp] /* [rip + LCPI0_3] */
-	VPAND     Y2, Y0, Y3    // vpand    ymm3, ymm0, ymm2
-	VPXOR     Y4, Y4, Y4    // vpxor    ymm4, ymm4, ymm4
-	VPCMPEQB  Y4, Y3, Y3    // vpcmpeqb    ymm3, ymm3, ymm4
-	VPAND     Y2, Y1, Y2    // vpand    ymm2, ymm1, ymm2
-	VPCMPEQB  Y4, Y2, Y2    // vpcmpeqb    ymm2, ymm2, ymm4
-	VPMOVMSKB Y3, AX        // vpmovmskb    eax, ymm3
-	VPMOVMSKB Y2, SI        // vpmovmskb    esi, ymm2
-	SHLQ      $32, SI       // shl    rsi, 32
-	ORQ       AX, SI        // or    rsi, rax
-	NOTQ      SI            // not    rsi
-	MOVQ      SI, (CX)      // mov    qword [rcx], rsi
-	VMOVDQA   0x100(R8), Y2 // vmovdqa    ymm2, yword 128[rbp] /* [rip + LCPI0_4] */
-	VPAND     Y2, Y0, Y0    // vpand    ymm0, ymm0, ymm2
-	VPCMPEQB  Y4, Y0, Y0    // vpcmpeqb    ymm0, ymm0, ymm4
-	VPAND     Y2, Y1, Y1    // vpand    ymm1, ymm1, ymm2
-	VPCMPEQB  Y4, Y1, Y1    // vpcmpeqb    ymm1, ymm1, ymm4
-	VPMOVMSKB Y0, AX        // vpmovmskb    eax, ymm0
-	VPMOVMSKB Y1, CX        // vpmovmskb    ecx, ymm1
-	SHLQ      $32, CX       // shl    rcx, 32
-	ORQ       AX, CX        // or    rcx, rax
-	NOTQ      CX            // not    rcx
-	MOVQ      CX, (DX)      // mov    qword [rdx], rcx
+TEXT ·__init_whitespace_and_structurals_avx2(SB), $0
+	LEAQ    LCDATA1<>(SB), R8
+	VMOVDQU 0x000(R8), WSAS_LOWTBL_AVX2
+	VMOVDQU 0x040(R8), WSAS_NIBMASK_AVX2
+	VMOVDQU 0x080(R8), WSAS_HIGHTBL_AVX2
+	VMOVDQU 0x0c0(R8), WSAS_STRUCT_AVX2
+	VMOVDQU 0x100(R8), WSAS_WS_AVX2
+	VPXOR   WSAS_ZERO_AVX2, WSAS_ZERO_AVX2, WSAS_ZERO_AVX2
+	RET
+
+// Y0 and Y1 come out holding the AND of the two table lookups, for the low and the high
+// half of the block. Both tests below are made against those, so neither half is looked
+// up twice.
+TEXT ·__find_whitespace_and_structurals(SB), $0
+	VPSHUFB Y8, WSAS_LOWTBL_AVX2, Y0  // vpshufb    ymm3, ymm2, ymm0
+	VPSRLD  $4, Y8, Y2                // vpsrld    ymm0, ymm0, 4
+	VPAND   WSAS_NIBMASK_AVX2, Y2, Y2 // vpand    ymm0, ymm0, ymm4
+	VPSHUFB Y2, WSAS_HIGHTBL_AVX2, Y2 // vpshufb    ymm0, ymm5, ymm0
+	VPAND   Y2, Y0, Y0                // vpand    ymm0, ymm0, ymm3
+	VPSHUFB Y9, WSAS_LOWTBL_AVX2, Y1  // vpshufb    ymm2, ymm2, ymm1
+	VPSRLD  $4, Y9, Y3                // vpsrld    ymm1, ymm1, 4
+	VPAND   WSAS_NIBMASK_AVX2, Y3, Y3 // vpand    ymm1, ymm1, ymm4
+	VPSHUFB Y3, WSAS_HIGHTBL_AVX2, Y3 // vpshufb    ymm1, ymm5, ymm1
+	VPAND   Y3, Y1, Y1                // vpand    ymm1, ymm1, ymm2
+
+	VPAND     WSAS_STRUCT_AVX2, Y0, Y2 // vpand    ymm3, ymm0, ymm2
+	VPCMPEQB  WSAS_ZERO_AVX2, Y2, Y2   // vpcmpeqb    ymm3, ymm3, ymm4
+	VPAND     WSAS_STRUCT_AVX2, Y1, Y3 // vpand    ymm2, ymm1, ymm2
+	VPCMPEQB  WSAS_ZERO_AVX2, Y3, Y3   // vpcmpeqb    ymm2, ymm2, ymm4
+	VPMOVMSKB Y2, AX                   // vpmovmskb    eax, ymm3
+	VPMOVMSKB Y3, CX                   // vpmovmskb    esi, ymm2
+	SHLQ      $32, CX                  // shl    rsi, 32
+	ORQ       AX, CX                   // or    rsi, rax
+	NOTQ      CX                       // not    rsi
+	MOVQ      CX, AVX2_STRUCTURALS
+
+	VPAND     WSAS_WS_AVX2, Y0, Y2   // vpand    ymm0, ymm0, ymm2
+	VPCMPEQB  WSAS_ZERO_AVX2, Y2, Y2 // vpcmpeqb    ymm0, ymm0, ymm4
+	VPAND     WSAS_WS_AVX2, Y1, Y3   // vpand    ymm1, ymm1, ymm2
+	VPCMPEQB  WSAS_ZERO_AVX2, Y3, Y3 // vpcmpeqb    ymm1, ymm1, ymm4
+	VPMOVMSKB Y2, AX                 // vpmovmskb    eax, ymm0
+	VPMOVMSKB Y3, CX                 // vpmovmskb    ecx, ymm1
+	SHLQ      $32, CX                // shl    rcx, 32
+	ORQ       AX, CX                 // or    rcx, rax
+	NOTQ      CX                     // not    rcx
+	MOVQ      CX, AVX2_WHITESPACE
 	RET
 
 TEXT ·_find_whitespace_and_structurals_avx512(SB), $0-24

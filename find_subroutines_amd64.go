@@ -3,6 +3,7 @@
 
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,6 +53,9 @@ func __init_newline_delimiters_avx512()
 func __find_newline_delimiters_avx512()
 
 //go:noescape
+func __init_quote_mask_and_bits_avx2()
+
+//go:noescape
 func __find_quote_mask_and_bits()
 
 //go:noescape
@@ -76,6 +80,9 @@ func find_quote_mask_and_bits_avx512(buf []byte, odd_ends uint64, prev_iter_insi
 	*error_mask, *quote_bits, quote_mask = _find_quote_mask_and_bits_avx512(unsafe.Pointer(&buf[0]), odd_ends, unsafe.Pointer(prev_iter_inside_quote))
 	return
 }
+
+//go:noescape
+func __init_odd_backslash_sequences_avx2()
 
 //go:noescape
 func __find_odd_backslash_sequences()
@@ -196,6 +203,9 @@ func find_structural_bits_in_slice_avx512(buf []byte, prev_iter_ends_odd_backsla
 		unsafe.Pointer(carried), unsafe.Pointer(position),
 		ndjson)
 }
+
+//go:noescape
+func __init_whitespace_and_structurals_avx2()
 
 //go:noescape
 func __find_whitespace_and_structurals()

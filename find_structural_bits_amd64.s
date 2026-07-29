@@ -2,11 +2,33 @@
 
 // Hand-written, unlike the five steps it calls: this is the glue that runs them over
 // one 64-byte block and, in _find_structural_bits_in_slice, over a whole slice of the
-// message. The steps hand their masks to each other through the caller's memory,
-// which is why the argument list is a list of pointers rather than of values.
+// message.
+//
+// The AVX2 register map, which the three steps in the other files share and which is
+// why they cannot be read on their own:
+//
+//	Y8, Y9  the 64 bytes being classified
+//	Y0-Y3   scratch, free across any call
+//	Y4      '\\'                          __init_odd_backslash_sequences_avx2
+//	Y5-Y7   '"', 0x80, 0xa0               __init_quote_mask_and_bits_avx2
+//	Y10-Y15 the nibble tables, 0x7f, 0x07, 0x18, zero
+//	                                      __init_whitespace_and_structurals_avx2
+//
+// The constants are loaded once by the three __init_ routines and then live in those
+// registers for the whole slice, which is what the AVX-512 path already did with its Z
+// registers. Before that each step re-loaded its own, nine VMOVDQAs and three LEAQs per
+// 64 bytes.
+//
+// The masks also move between the steps in registers - DI, SI and R13, named
+// AVX2_STRUCTURALS, AVX2_WHITESPACE and AVX2_QUOTEBITS where they are set - rather than through the
+// caller's memory. The argument list is still a list of pointers because the state
+// carried from one block to the next genuinely lives in the caller's memory; only the
+// masks produced and consumed within a block are registers now.
 //
 // Modifications copyright (c) 2026 DATA.BET, licensed under the Apache License,
 // Version 2.0.
+
+#include "common.h"
 
 TEXT ·_find_structural_bits(SB), $0-72
 
@@ -16,26 +38,28 @@ TEXT ·_find_structural_bits(SB), $0-72
 	VMOVDQU (DI), Y8     // load low 32-bytes
 	VMOVDQU 0x20(DI), Y9 // load high 32-bytes
 
+	CALL ·__init_odd_backslash_sequences_avx2(SB)
+	CALL ·__init_quote_mask_and_bits_avx2(SB)
+	CALL ·__init_whitespace_and_structurals_avx2(SB)
+
 	CALL ·__find_odd_backslash_sequences(SB)
 
 	MOVQ AX, DX                            // odd_ends + 16
 	MOVQ prev_iter_inside_quote+16(FP), CX
-	MOVQ quote_bits+24(FP), R8
 	MOVQ error_mask+32(FP), R9
 
-	CALL  ·__find_quote_mask_and_bits(SB)
-	PUSHQ AX                              // MOVQ AX, quote_mask + 64
+	CALL ·__find_quote_mask_and_bits(SB) // AX = quote_mask, AVX2_QUOTEBITS = quote_bits
+	MOVQ AX, R12                         // quote_mask, over the next call
 
-	MOVQ whitespace+40(FP), DX
-	MOVQ structurals_in+48(FP), CX
+	CALL ·__find_whitespace_and_structurals(SB) // AVX2_STRUCTURALS, AVX2_WHITESPACE
 
-	CALL ·__find_whitespace_and_structurals(SB)
+	MOVQ quote_bits+24(FP), CX; MOVQ AVX2_QUOTEBITS, (CX)   // the caller still wants these
+	MOVQ whitespace+40(FP), CX; MOVQ AVX2_WHITESPACE, (CX)   // two written out
+	MOVQ structurals_in+48(FP), CX; MOVQ AVX2_STRUCTURALS, (CX)
 
-	MOVQ structurals_in+48(FP), DI; MOVQ (DI), DI // DI = structurals
-	MOVQ whitespace+40(FP), SI; MOVQ (SI), SI     // SI = whitespace
-	POPQ DX                                       // DX = quote_mask
-	MOVQ quote_bits+24(FP), CX; MOVQ (CX), CX     // CX = quote_bits
-	MOVQ prev_iter_ends_pseudo_pred+56(FP), R8    // R8 = &prev_iter_ends_pseudo_pred
+	MOVQ R12, DX                               // DX = quote_mask
+	MOVQ AVX2_QUOTEBITS, CX                        // CX = quote_bits
+	MOVQ prev_iter_ends_pseudo_pred+56(FP), R8 // R8 = &prev_iter_ends_pseudo_pred
 
 	CALL ·__finalize_structurals(SB)
 	MOVQ AX, structurals+64(FP)
@@ -43,18 +67,24 @@ TEXT ·_find_structural_bits(SB), $0-72
 	VZEROUPPER
 	RET
 
+// Y0 to Y3 rather than Y10 to Y13: those now hold constants that have to survive the
+// whole slice, and this runs between two iterations of the loop.
 #define MASK_WHITESPACE(MAX, Y) \
 	LEAQ     MASKTABLE<>(SB), DX \
 	MOVQ     $MAX, BX            \
 	SUBQ     CX, BX              \
-	VMOVDQU  (DX)(BX*1), Y10     \ // Load mask
-	VPCMPEQB Y11, Y11, Y11       \ // Set all bits
-	VPXOR    Y11, Y10, Y12       \ // Invert mask
-	VPAND    Y13, Y12, Y12       \ // Mask whitespace
-	VPAND    Y10, Y, Y           \ // Mask message
-	VPOR     Y12, Y, Y           // Combine together
+	VMOVDQU  (DX)(BX*1), Y0      \ // Load mask
+	VPCMPEQB Y1, Y1, Y1          \ // Set all bits
+	VPXOR    Y1, Y0, Y2          \ // Invert mask
+	VPAND    Y3, Y2, Y2          \ // Mask whitespace
+	VPAND    Y0, Y, Y            \ // Mask message
+	VPOR     Y2, Y, Y            // Combine together
 
 TEXT ·_find_structural_bits_in_slice(SB), $0-128
+	CALL ·__init_odd_backslash_sequences_avx2(SB)
+	CALL ·__init_quote_mask_and_bits_avx2(SB)
+	CALL ·__init_whitespace_and_structurals_avx2(SB)
+
 	XORQ AX, AX
 	MOVQ len+8(FP), CX
 	ANDQ $0xffffffffffffffc0, CX
@@ -76,28 +106,20 @@ loop_after_load:
 
 	MOVQ AX, DX                            // odd_ends + 16
 	MOVQ prev_iter_inside_quote+24(FP), CX
-	MOVQ quote_bits+32(FP), R8
 	MOVQ error_mask+40(FP), R9
 
-	CALL  ·__find_quote_mask_and_bits(SB)
-	PUSHQ AX                              // MOVQ AX, quote_mask + 64
+	CALL ·__find_quote_mask_and_bits(SB) // AX = quote_mask, AVX2_QUOTEBITS = quote_bits
+	MOVQ AX, R12                         // quote_mask, over the next two calls
 
-	MOVQ whitespace+48(FP), DX
-	MOVQ structurals_in+56(FP), CX
+	CALL ·__find_whitespace_and_structurals(SB) // AVX2_STRUCTURALS, AVX2_WHITESPACE
 
-	CALL ·__find_whitespace_and_structurals(SB)
-
-	MOVQ  structurals_in+56(FP), DI; MOVQ (DI), DI // DI = structurals
-	MOVQ  whitespace+48(FP), SI; MOVQ (SI), SI     // SI = whitespace
-	POPQ  DX                                       // DX = quote_mask
-	PUSHQ DX                                       // Save again for newline determination
-
-	MOVQ quote_bits+32(FP), CX; MOVQ (CX), CX  // CX = quote_bits
+	MOVQ R12, DX                               // DX = quote_mask
+	MOVQ AVX2_QUOTEBITS, CX                        // CX = quote_bits
 	MOVQ prev_iter_ends_pseudo_pred+64(FP), R8 // R8 = &prev_iter_ends_pseudo_pred
 
 	CALL ·__finalize_structurals(SB)
 
-	POPQ DX                             // DX = quote_mask
+	MOVQ R12, DX                        // DX = quote_mask
 	CMPQ ndjson+112(FP), $0
 	JZ   skip_ndjson_detection
 	CALL ·__find_newline_delimiters(SB)
@@ -141,7 +163,7 @@ done:
 
 masking:
 	// Do a partial load and mask out bytes after the end of the message with whitespace
-	VPBROADCASTQ WHITESPACE<>(SB), Y13 // Load padding whitespace constant
+	VPBROADCASTQ WHITESPACE<>(SB), Y3 // Load padding whitespace constant
 
 	MOVQ    buf+0(FP), DI
 	VMOVDQU (DI)(AX*1), Y8 // Always load low 32-bytes
@@ -150,7 +172,7 @@ masking:
 
 	// Perform masking on low 32-bytes
 	MASK_WHITESPACE(0x1f, Y8)
-	VMOVDQU Y13, Y9
+	VMOVDQU Y3, Y9
 	JMP     masking_done
 
 masking_high:

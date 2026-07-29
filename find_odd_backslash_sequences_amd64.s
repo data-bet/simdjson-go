@@ -15,6 +15,8 @@ DATA LCDATA1<>+0x010(SB)/8, $0x5c5c5c5c5c5c5c5c
 DATA LCDATA1<>+0x018(SB)/8, $0x5c5c5c5c5c5c5c5c
 GLOBL LCDATA1<>(SB), 8, $32
 
+#include "common.h"
+
 TEXT ·_find_odd_backslash_sequences(SB), $0-24
 
 	MOVQ p1+0(FP), DI
@@ -23,21 +25,28 @@ TEXT ·_find_odd_backslash_sequences(SB), $0-24
 	VMOVDQU (DI), Y8     // load low 32-bytes
 	VMOVDQU 0x20(DI), Y9 // load high 32-bytes
 
+	CALL ·__init_odd_backslash_sequences_avx2(SB)
 	CALL ·__find_odd_backslash_sequences(SB)
 
 	VZEROUPPER
 	MOVQ AX, result+16(FP)
 	RET
 
+// OBSS_CONST_AVX2 holds the broadcast backslash for as long as a caller keeps running
+// blocks through the routine below. See the register map in find_structural_bits_amd64.s.
+
+TEXT ·__init_odd_backslash_sequences_avx2(SB), $0
+	LEAQ    LCDATA1<>(SB), R8
+	VMOVDQU (R8), OBSS_CONST_AVX2
+	RET
+
 TEXT ·__find_odd_backslash_sequences(SB), $0
-	LEAQ      LCDATA1<>(SB), R8
-	VMOVDQA   (R8), Y0           // vmovdqa    ymm0, yword 0[rbp] /* [rip + LCPI0_0] */
-	VPCMPEQB  Y8/*(DI)*/, Y0, Y1 // vpcmpeqb    ymm1, ymm0, yword [rdi]
-	VPMOVMSKB Y1, CX             // vpmovmskb    ecx, ymm1
-	VPCMPEQB  Y9/*(SI)*/, Y0, Y0 // vpcmpeqb    ymm0, ymm0, yword [rsi]
-	VPMOVMSKB Y0, AX             // vpmovmskb    eax, ymm0
-	SHLQ      $32, AX            // shl    rax, 32
-	ORQ       CX, AX             // or    rax, rcx
+	VPCMPEQB  Y8, OBSS_CONST_AVX2, Y0 // vpcmpeqb    ymm1, ymm0, yword [rdi]
+	VPMOVMSKB Y0, CX                  // vpmovmskb    ecx, ymm1
+	VPCMPEQB  Y9, OBSS_CONST_AVX2, Y1 // vpcmpeqb    ymm0, ymm0, yword [rsi]
+	VPMOVMSKB Y1, AX                  // vpmovmskb    eax, ymm0
+	SHLQ      $32, AX                 // shl    rax, 32
+	ORQ       CX, AX                  // or    rax, rcx
 
 #define FIND_ODD_BACKSLASH_SEQUENCES \
 	LEAQ  (AX)(AX*1), CX           \ // lea    rcx, [rax + rax]
