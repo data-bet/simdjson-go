@@ -89,7 +89,6 @@ type internalParsedJson struct {
 	containingScopeOffset []uint64
 	isvalid               bool
 	indexChans            chan indexChan
-	indexesChan           indexChan
 	buffers               [indexSlots][indexSize]uint32
 	buffersOffset         uint64
 	ndjson                uint64

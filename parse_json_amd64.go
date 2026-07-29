@@ -53,7 +53,6 @@ func (pj *internalParsedJson) initialize(size int) {
 		pj.containingScopeOffset = make([]uint64, 0, maxdepth)
 	}
 	pj.containingScopeOffset = pj.containingScopeOffset[:0]
-	pj.indexesChan = indexChan{}
 }
 
 func (pj *internalParsedJson) parseMessage(msg []byte, ndjson bool) (err error) {

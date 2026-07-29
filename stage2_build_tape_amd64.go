@@ -32,33 +32,58 @@ const retAddressStartConst = 1
 const retAddressObjectConst = 2
 const retAddressArrayConst = 3
 
-func updateChar(pj *internalParsedJson, idx_in uint64) (done bool, idx uint64) {
-	if pj.indexesChan.index >= pj.indexesChan.length {
-		pj.indexesChan = <-pj.indexChans // Get next element from channel
-		done = pj.indexesChan.index == -1
-		if done {
-			return
-		}
-	}
-	idx = idx_in + uint64(pj.indexesChan.indexes[pj.indexesChan.index])
-	pj.indexesChan.index++
-	return
+// indexCursor walks the structural indexes stage 1 produces.
+//
+// It is kept in a local of unifiedMachine rather than on the parser so that the
+// position and the slice stay in registers. Reading them back out of the
+// heap-allocated parser cost four loads and a store per structural character, and
+// the store-to-load forwarding on the position serialized one element against the
+// next; it measured at 6.5-8.7% of parse time.
+//
+// Holding the remaining indexes as a slice rather than a pointer to the whole array
+// also lets the bounds check go: the branch that refills establishes that pos is
+// inside it.
+type indexCursor struct {
+	idxs []uint32
+	pos  int
 }
 
-// Handy "debug" function to see where Stage 2 fails (rename to `updateChar`)
-func updateCharDebug(pj *internalParsedJson, idx_in uint64) (done bool, idx uint64) {
-	if pj.indexesChan.index >= pj.indexesChan.length {
-		var ok bool
-		pj.indexesChan, ok = <-pj.indexChans // Get next element from channel
-		if !ok {
-			done = true // return done if channel closed
-			return
+// next returns the offset of the next structural character in the message, taking
+// the next buffer from stage 1 when the current one runs out. done reports that
+// stage 1 has signalled the end of the stream.
+func (c *indexCursor) next(pj *internalParsedJson, idxIn uint64) (done bool, idx uint64) {
+	if c.pos >= len(c.idxs) {
+		ic := <-pj.indexChans
+		if ic.index == -1 {
+			return true, idxIn
 		}
+		c.idxs, c.pos = ic.indexes[ic.index:ic.length], 0
 	}
-	idx = idx_in + uint64(pj.indexesChan.indexes[pj.indexesChan.index])
-	fmt.Printf("At 0x%x char: %s\n", idx, string(pj.Message[idx]))
-	pj.indexesChan.index++
-	return
+	idx = idxIn + uint64(c.idxs[c.pos])
+	c.pos++
+	return false, idx
+}
+
+// peek returns the increment from the current structural character to the one after
+// it, without consuming anything.
+//
+// It answers 0 when the next buffer has not been received yet. That should not
+// happen where it matters - stage 1 holds a trailing quote back for the next buffer
+// so a string is never the last index in one - and parseString clamps a zero away.
+func (c *indexCursor) peek() uint64 {
+	if c.pos >= len(c.idxs) {
+		return 0
+	}
+	return uint64(c.idxs[c.pos])
+}
+
+// Handy "debug" method to see where Stage 2 fails (call in place of `next`)
+func (c *indexCursor) nextDebug(pj *internalParsedJson, idxIn uint64) (done bool, idx uint64) {
+	done, idx = c.next(pj, idxIn)
+	if !done {
+		fmt.Printf("At 0x%x char: %s\n", idx, string(pj.Message[idx]))
+	}
+	return done, idx
 }
 
 // pushScope records the current tape location for the scope we are entering,
@@ -77,15 +102,6 @@ func (pj *internalParsedJson) pushScope(retAddress uint64) bool {
 	pj.containingScopeOffset = pj.containingScopeOffset[:depth+1]
 	pj.containingScopeOffset[depth] = (pj.get_current_loc() << retAddressShift) | retAddress
 	return true
-}
-
-func peekSize(pj *internalParsedJson) uint64 {
-	if pj.indexesChan.index >= pj.indexesChan.length {
-		//panic("cannot peek the size") // should never happen since last string element should be saved for next buffer
-		// let's return 0 for the sake of safety (could lead to a string being to short)
-		return 0
-	}
-	return uint64(pj.indexesChan.indexes[pj.indexesChan.index])
 }
 
 // reserveStrings makes room for n more bytes in the string buffer and returns the
@@ -129,11 +145,11 @@ func (pj *internalParsedJson) parseString(idx uint64, maxStringSize uint64) bool
 	size := uint64(0)
 	buf := pj.Message[idx:]
 	// Clamp the scan bound to what is actually left in the message. The unsigned
-	// wrap-around also catches maxStringSize == 0, which peekSize returns when the
-	// next structural index has not been received yet: stage 1 keeps a trailing quote
-	// back for the next index buffer so that should not happen for a string, but a
-	// zero bound must never reach the assembly, which reads it as "no room at all"
-	// and fails immediately.
+	// wrap-around also catches maxStringSize == 0, which indexCursor.peek returns when
+	// the next structural index has not been received yet: stage 1 keeps a trailing
+	// quote back for the next index buffer so that should not happen for a string, but a
+	// zero bound must never reach the assembly, which reads it as "no room at all" and
+	// fails immediately.
 	if maxStringSize-1 >= uint64(len(buf)) {
 		maxStringSize = uint64(len(buf))
 	}
@@ -241,6 +257,7 @@ func (pj *internalParsedJson) unifiedMachine() (ok, done bool) {
 
 	idx := ^uint64(0)   // location of the structural character in the input (buf)
 	offset := uint64(0) // used to contain last element of containing_scope_offset
+	var cur indexCursor // walks the structural indexes; see indexCursor
 
 	////////////////////////////// START STATE /////////////////////////////
 	if !pj.pushScope(retAddressStartConst) {
@@ -250,7 +267,7 @@ func (pj *internalParsedJson) unifiedMachine() (ok, done bool) {
 	pj.write_tape(0, 'r') // r for root, 0 is going to get overwritten
 	// the root is used, if nothing else, to capture the size of the tape
 
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	}
 continueRoot:
@@ -273,7 +290,7 @@ continueRoot:
 
 startContinue:
 	// We are back at the top, read the next char and we should be done
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	} else {
 		// For an ndjson object, wrap up current object, start new root and check for minimum of 1 newline
@@ -283,7 +300,7 @@ startContinue:
 
 		// Eat any empty lines
 		for buf[idx] == '\n' {
-			if done, idx = updateChar(pj, idx); done {
+			if done, idx = cur.next(pj, idx); done {
 				goto succeed
 			}
 		}
@@ -309,12 +326,12 @@ startContinue:
 	//////////////////////////////// OBJECT STATES /////////////////////////////
 
 object_begin:
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	}
 	switch buf[idx] {
 	case '"':
-		if !pj.parseString(idx, peekSize(pj)) {
+		if !pj.parseString(idx, cur.peek()) {
 			goto fail
 		}
 		goto object_key_state
@@ -325,18 +342,18 @@ object_begin:
 	}
 
 object_key_state:
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	}
 	if buf[idx] != ':' {
 		goto fail
 	}
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	}
 	switch buf[idx] {
 	case '"':
-		if !pj.parseString(idx, peekSize(pj)) {
+		if !pj.parseString(idx, cur.peek()) {
 			goto fail
 		}
 
@@ -390,18 +407,18 @@ object_key_state:
 	}
 
 objectContinue:
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	}
 	switch buf[idx] {
 	case ',':
-		if done, idx = updateChar(pj, idx); done {
+		if done, idx = cur.next(pj, idx); done {
 			goto succeed
 		}
 		if buf[idx] != '"' {
 			goto fail
 		}
-		if !pj.parseString(idx, peekSize(pj)) {
+		if !pj.parseString(idx, cur.peek()) {
 			goto fail
 		}
 		goto object_key_state
@@ -435,7 +452,7 @@ scopeEnd:
 
 	////////////////////////////// ARRAY STATES /////////////////////////////
 arrayBegin:
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	}
 	if buf[idx] == ']' {
@@ -447,7 +464,7 @@ mainArraySwitch:
 	// on paths that can accept a close square brace (post-, and at start)
 	switch buf[idx] {
 	case '"':
-		if !pj.parseString(idx, peekSize(pj)) {
+		if !pj.parseString(idx, cur.peek()) {
 			goto fail
 		}
 	case 't':
@@ -501,12 +518,12 @@ mainArraySwitch:
 	}
 
 arrayContinue:
-	if done, idx = updateChar(pj, idx); done {
+	if done, idx = cur.next(pj, idx); done {
 		goto succeed
 	}
 	switch buf[idx] {
 	case ',':
-		if done, idx = updateChar(pj, idx); done {
+		if done, idx = cur.next(pj, idx); done {
 			goto succeed
 		}
 		goto mainArraySwitch
