@@ -74,8 +74,16 @@ type ParsedJson struct {
 	internal *internalParsedJson
 }
 
-const indexSlots = 16
-const indexSize = 1536                            // Seems to be a good size for the index buffering
+// Stage 1 fills whole buffers of structural indexes and hands them to stage 2 over a
+// channel of indexSlots-2 entries, so these two numbers set how often the stages
+// synchronise and how far stage 1 may run ahead.
+//
+// 6144 indexes in six slots replaced 1536 in sixteen. Sweeping the two constants apart
+// tells them apart: what pays is handing over four times less often, not having more
+// memory in flight, and the same amount in flight spread over more slots costs the
+// number-heavy documents for the extra distance stage 1 then runs ahead by.
+const indexSlots = 6
+const indexSize = 6144                            // Indexes per buffer handed to stage 2
 const indexSizeWithSafetyBuffer = indexSize - 128 // Make sure we never write beyond buffer
 
 type indexChan struct {
