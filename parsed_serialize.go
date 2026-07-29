@@ -1,5 +1,6 @@
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -256,7 +257,7 @@ func (s *Serializer) Serialize(dst []byte, pj ParsedJson) []byte {
 	valWr, valDone := encBlock(s.compValues, s.valuesCompBuf, s.fasterComp)
 	tagWr, tagDone := encBlock(s.compTags, s.tagsCompBuf, s.fasterComp)
 	// Pessimistically allocate for maximum possible size.
-	if cap(s.tagsBuf) <= tagBufSize {
+	if cap(s.tagsBuf) < tagBufSize {
 		s.tagsBuf = make([]byte, tagBufSize)
 	}
 	s.tagsBuf = s.tagsBuf[:tagBufSize]
