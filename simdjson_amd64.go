@@ -34,6 +34,12 @@ import (
 
 var wantFeatures = cpuid.CombineFeatures(cpuid.AVX2, cpuid.CLMUL)
 
+// haveAVX512 selects the AVX-512 stage 1 pipeline over the AVX2 one. It is settled
+// once, here, rather than asked of cpuid on every call: the choice is the same for
+// the life of the process, and a test that wants the other pipeline has to set this
+// - taking the feature bit away from cpuid afterwards no longer changes anything.
+var haveAVX512 = cpuid.CPU.Has(cpuid.AVX512F)
+
 // SupportedCPU will return whether the CPU is supported.
 func SupportedCPU() bool {
 	return cpuid.CPU.HasAll(wantFeatures)

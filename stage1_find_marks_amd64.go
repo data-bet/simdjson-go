@@ -22,8 +22,6 @@ package simdjson
 
 import (
 	"sync/atomic"
-
-	"github.com/klauspost/cpuid/v2"
 )
 
 var jsonMarkupTable = [256]bool{
@@ -40,7 +38,6 @@ func jsonMarkup(b byte) bool {
 }
 
 func (pj *internalParsedJson) findStructuralIndices() bool {
-	avx512 := cpuid.CPU.Has(cpuid.AVX512F)
 	buf := pj.Message
 	// persistent state across loop
 	// does the last iteration end with an odd-length sequence of backslashes?
@@ -82,7 +79,7 @@ func (pj *internalParsedJson) findStructuralIndices() bool {
 		}
 
 		var processed uint64
-		if avx512 {
+		if haveAVX512 {
 			processed = find_structural_bits_in_slice_avx512(buf[:len(buf) & ^63], &prev_iter_ends_odd_backslash,
 				&prev_iter_inside_quote, &error_mask,
 				&prev_iter_ends_pseudo_pred,
@@ -100,7 +97,7 @@ func (pj *internalParsedJson) findStructuralIndices() bool {
 			paddedBuf := [128]byte{}
 			copy(paddedBuf[:], buf[processed:])
 			paddedBytes := uint64(len(buf)) - processed
-			if avx512 {
+			if haveAVX512 {
 				processed += find_structural_bits_in_slice_avx512(paddedBuf[:paddedBytes], &prev_iter_ends_odd_backslash,
 					&prev_iter_inside_quote, &error_mask,
 					&prev_iter_ends_pseudo_pred,
