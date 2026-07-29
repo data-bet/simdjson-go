@@ -27,8 +27,20 @@ import (
 )
 
 // syncSizeLimit is the largest message stage 1 and stage 2 handle one after the
-// other rather than concurrently. See internalParsedJson.async for what bounds it.
-const syncSizeLimit = 8 << 10
+// other rather than concurrently. See internalParsedJson.async for what that costs.
+//
+// Running the two concurrently only pays once there is enough of a document to overlap:
+// the goroutine, parking stage 2 until the first buffer arrives and waking it across
+// cores cost more than the overlap returns on a small one. Forcing each mode over the
+// corpus puts the crossing between 215 KB and 500 KB, and a uniform array of small
+// objects crosses lower, near 128 KB - which way a document in that band goes depends on
+// how its work divides between the stages rather than on how big it is.
+//
+// 256 KB takes the sequential side of the band. Where the two are close the sequential
+// path is the better bargain anyway: it reaches the same wall clock on one core rather
+// than two, which is what a server parsing several documents at once pays for. It was
+// 8 KB before, which predates any measurement.
+const syncSizeLimit = 256 << 10
 
 func (pj *internalParsedJson) initialize(size int) {
 	// Estimate the tape size to be about 15% of the length of the JSON message.

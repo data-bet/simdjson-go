@@ -64,11 +64,17 @@ func (pj *internalParsedJson) findStructuralIndices() bool {
 	position := ^uint64(0)
 	stripped_index := ^uint64(0)
 
-	for len(buf) > 0 {
+	for round := 0; len(buf) > 0; round++ {
 
 		index := indexChan{}
-		offset := atomic.AddUint64(&pj.buffersOffset, 1)
-		index.indexes = &pj.buffers[offset%indexSlots]
+		if pj.async {
+			// The channel throttles stage 1 to indexSlots-2 buffers ahead, so the ring
+			// never catches up with a buffer stage 2 is still reading.
+			offset := atomic.AddUint64(&pj.buffersOffset, 1)
+			index.indexes = &pj.buffers[offset%indexSlots]
+		} else {
+			index.indexes = pj.syncBuffer(round)
+		}
 
 		// In case last index during previous round was stripped back, put it back
 		if stripped_index != ^uint64(0) {

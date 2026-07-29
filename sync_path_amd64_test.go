@@ -68,8 +68,9 @@ func countArrayElems(t *testing.T, pj *ParsedJson) int {
 }
 
 // The synchronous path has no channel throttling stage 1, so every buffer it fills
-// has to remain live at once. Check that the densest document below the cutoff stays
-// well inside the available slots, and that it really does use more than one.
+// has to remain live at once - which is why it takes them from syncBuffer rather than
+// the ring. Check that the densest document below the cutoff gets a distinct buffer
+// for every round, and that it really does need more than the ring holds.
 func TestSyncPathMultipleIndexBuffers(t *testing.T) {
 	if !SupportedCPU() {
 		t.SkipNow()
@@ -85,14 +86,18 @@ func TestSyncPathMultipleIndexBuffers(t *testing.T) {
 	if pj.async {
 		t.Fatalf("%d byte message took the async path", len(msg))
 	}
-	if len(pj.indexList) < 2 {
-		t.Fatalf("stage 1 used %d index buffer(s); the multi-buffer case is not covered", len(pj.indexList))
-	}
-	if len(pj.indexList) > indexSlots {
-		t.Fatalf("stage 1 used %d buffers but only %d slots exist, so they overwrote each other",
+	if len(pj.indexList) <= indexSlots {
+		t.Fatalf("stage 1 used %d index buffer(s), within the %d of the ring; the case syncBuffer exists for is not covered",
 			len(pj.indexList), indexSlots)
 	}
-	t.Logf("%d bytes, %d index buffers of %d slots", len(msg), len(pj.indexList), indexSlots)
+	seen := make(map[*[indexSize]uint32]int, len(pj.indexList))
+	for i, ic := range pj.indexList {
+		if first, dup := seen[ic.indexes]; dup {
+			t.Fatalf("index buffers %d and %d are the same one, so they overwrote each other", first, i)
+		}
+		seen[ic.indexes] = i
+	}
+	t.Logf("%d bytes, %d distinct index buffers (%d from the ring)", len(msg), len(pj.indexList), indexSlots)
 
 	if got := countArrayElems(t, &pj.ParsedJson); got != want {
 		t.Errorf("parsed %d elements, want %d", got, want)

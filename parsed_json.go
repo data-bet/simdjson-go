@@ -95,19 +95,40 @@ type internalParsedJson struct {
 	// document that was about a quarter of the parse.
 	//
 	// Without the channel there is no back pressure, so every buffer stage 1 produces
-	// has to stay live at once. That bounds the synchronous path: buffers hold
-	// indexSizeWithSafetyBuffer indexes each and a message cannot have more indexes
-	// than bytes, so the syncSizeLimit byte cutoff in parseMessage keeps the count
-	// well inside indexSlots.
+	// has to stay live at once. The ring only has indexSlots of them, so beyond that
+	// the synchronous path takes buffers from syncBufs instead - see syncBuffer.
 	async         bool
 	indexList     []indexChan
 	buffers       [indexSlots][indexSize]uint32
 	buffersOffset uint64
-	ndjson        uint64
-	copyStrings   bool
+	// syncBufs extends the ring for the synchronous path, which needs one buffer per
+	// round rather than one in flight. They are indexed by round and kept between
+	// parses, so a parser settles at the largest document it has seen and stops
+	// allocating. syncSizeLimit caps that: a message of that many bytes cannot hold
+	// more indexes, so the most a parser can end up holding here is about 900 KB, and
+	// only if it was handed the densest possible document at the top of the range.
+	syncBufs    []*[indexSize]uint32
+	ndjson      uint64
+	copyStrings bool
 	// padBuf holds a zero-tailed copy of a string that sits too close to the end
 	// of the message for the scanner to read whole words past it. See parseString.
 	padBuf []byte
+}
+
+// syncBuffer returns the buffer for round n of the synchronous path, where every
+// buffer stage 1 fills has to stay live until stage 2 has walked all of them.
+//
+// The ring covers the first indexSlots rounds, so a message small enough to fit in it
+// allocates nothing at all, exactly as before there was anything else. Past that the
+// buffers are allocated once and reused by later parses.
+func (pj *internalParsedJson) syncBuffer(n int) *[indexSize]uint32 {
+	if n < indexSlots {
+		return &pj.buffers[n]
+	}
+	for n-indexSlots >= len(pj.syncBufs) {
+		pj.syncBufs = append(pj.syncBufs, new([indexSize]uint32))
+	}
+	return pj.syncBufs[n-indexSlots]
 }
 
 // Iter returns a new Iter.
