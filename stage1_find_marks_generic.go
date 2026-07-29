@@ -25,10 +25,9 @@ import "math/bits"
 // that produces the masks in the first place needs a vector unit. That one becomes a
 // table lookup per byte.
 //
-// This file carries no build tag, so it is compiled everywhere. Nothing calls it yet -
-// the platforms that will are wired up in a later commit - but
-// stage1_generic_diff_amd64_test.go runs it against the assembly over the corpus, which
-// is the only way the two are known to agree.
+// This file carries no build tag, so it is compiled everywhere. On amd64 nothing
+// calls it, but stage1_generic_diff_amd64_test.go runs it against the assembly over
+// the corpus, which is the only way the two are known to agree.
 
 // The AVX2 and AVX-512 paths classify a byte by looking its two nibbles up in a pair
 // of 16-entry tables and ANDing the results, then testing bits of the product: 0x07
@@ -62,7 +61,7 @@ var jsonCharClass = buildJSONCharClass()
 func buildJSONCharClass() (t [256]uint8) {
 	for c := 0; c < 256; c++ {
 		var class uint8
-		// VPSHUFB yields zero for an index byte with bit 7
+		// VPSHUFB - and TBL on arm64 - yields zero for an index byte with bit 7
 		// set, and the index for the low-nibble lookup is the input byte itself.
 		// So a byte over 0x7f classifies as nothing at all, whatever the nibble
 		// tables say about it. This is what stops the spurious entries described
@@ -97,7 +96,10 @@ func buildJSONCharClass() (t [256]uint8) {
 // classifyBlockGeneric turns 64 bytes into the five masks the steps below consume,
 // plus the newline mask ndjson mode needs. This is the whole of what the vector units
 // are for here; everything after it is 64-bit integer work that is the same on every
-// platform.
+// platform, which is why arm64 supplies only this one step in assembly.
+//
+// classifyBlock, the name the loop below calls, is whichever of the two a platform
+// has: see stage1_classify_arm64.go and stage1_classify_other.go.
 func classifyBlockGeneric(b *[64]byte) (backslash, quote, whitespace, structural, control, newline uint64) {
 	for i := 0; i < 64; i++ {
 		c := uint64(jsonCharClass[b[i]])
@@ -247,7 +249,7 @@ func findStructuralBitsInSliceGeneric(buf []byte, prevIterEndsOddBackslash *uint
 			block = &pad
 		}
 
-		backslash, quote, whitespace, structural, control, newline := classifyBlockGeneric(block)
+		backslash, quote, whitespace, structural, control, newline := classifyBlock(block)
 
 		quote &^= findOddBackslashSequencesGeneric(backslash, prevIterEndsOddBackslash)
 

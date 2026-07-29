@@ -39,14 +39,25 @@ There are two implementations of the parser, and which one you get depends on th
 |---|---|
 | `amd64`, CPU with AVX2 and CLMUL | AVX2 assembly, and the AVX-512 variant where the CPU has AVX-512F |
 | `amd64`, CPU without AVX2 or CLMUL | none - `SupportedCPU()` is false and `Parse` returns an error |
+| `arm64` | NEON assembly for the stage 1 classification, portable Go for the rest |
 | any other platform, or `-tags=noasm`, or `gccgo` | portable Go |
 
 The portable implementation is a straight translation of the same algorithm and produces
-byte for byte identical output - the whole corpus has been checked, tape word for tape
-word. It is slower, since the step the vector units do - turning 64 bytes into the masks
-the rest of stage 1 works on - becomes a table lookup per byte. It is checked against the
-assembly by `stage1_generic_diff_amd64_test.go` and
-`parse_string_generic_diff_amd64_test.go`.
+byte for byte identical output - the whole corpus has been checked, on both
+architectures, tape word for tape word. It is slower, since the step the vector units do
+- turning 64 bytes into the masks the rest of stage 1 works on - becomes a table lookup
+per byte.
+
+`arm64` replaces exactly that step with NEON, in `stage1_classify_arm64.s`, and shares
+everything else with the portable path: the bit arithmetic after it compiles about as
+well from Go as it would from assembly, and the string parser's byte scanning already
+goes through `bytes.IndexByte`, which is NEON in the runtime. The string parser has no
+hand-written arm64 version, so `arm64` will not match `amd64` on string heavy documents.
+
+The two implementations are held together by `stage1_generic_diff_amd64_test.go` and
+`parse_string_generic_diff_amd64_test.go`, which run the portable code against the
+assembly over the corpus on `amd64`, and by `stage1_classify_arm64_test.go`, which does
+the same the other way round on `arm64`.
 
 A CPU with both AVX2 and CLMUL is required for the fast path (Haswell from 2013 onwards should do for Intel, for AMD a Ryzen/EPYC CPU (Q1 2017) should be sufficient).
 This can be checked using the provided [`SupportedCPU()`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#SupportedCPU) function.

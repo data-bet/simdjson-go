@@ -21,14 +21,23 @@ import "bytes"
 
 // The string parser without vector instructions, for platforms that have no assembly
 // implementation here. It carries no build tag, so it is compiled everywhere; on
-// nothing calls it yet - the platforms that will are wired up in a later commit - but
-// parse_string_generic_diff_amd64_test.go runs it against the assembly, which is the
-// only way the two are known to agree.
+// amd64 nothing calls it, but parse_string_generic_diff_amd64_test.go runs it against
+// the assembly, which is the only way the two are known to agree.
 //
 // The scan for the next quote or backslash goes through bytes.IndexByte rather than a
 // loop, which is where most of the vector path's advantage is recovered: it is
 // assembly on every architecture the runtime has one for, and a reasonable word-at-a-
 // time loop everywhere else.
+//
+// That is also why arm64 has no assembly of its own here, although it does for stage 1
+// in stage1_classify_arm64.s. The runtime's arm64 IndexByte is already NEON, so the
+// byte scanning - the part with any width to exploit - is vectorised; what is left is
+// the escape decoding, which is branchy and byte-at-a-time whatever it is written in.
+// A bespoke copy-and-find like the AVX2 one would still be worth something, since it
+// would fuse the copy into the scan, but not enough to write blind: there is no arm64
+// hardware here to measure it on, and an assembly routine nobody has timed is a
+// liability. The classification step in stage 1 was worth doing anyway because it has
+// no equivalent in the standard library at all.
 //
 // Two tables below decide what an escape means, and both match the LCDATA1 block of
 // parse_string_amd64.s byte for byte, which is what keeps the two implementations
