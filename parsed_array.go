@@ -1,5 +1,6 @@
 /*
  * MinIO Cloud Storage, (C) 2020 MinIO, Inc.
+ * Modifications copyright (c) 2026 DATA.BET
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -285,8 +286,8 @@ readArray:
 // AsString returns the array values as a slice of strings.
 // No conversion is done.
 func (a *Array) AsString() ([]string, error) {
-	// Estimate length
-	lenEst := len(a.tape.Tape) - a.off - 1
+	// Estimate length, each string is 2 tape entries
+	lenEst := (len(a.tape.Tape) - a.off - 1) / 2
 	if lenEst < 0 {
 		lenEst = 0
 	}
@@ -317,8 +318,8 @@ func (a *Array) AsString() ([]string, error) {
 // Scalar types are converted.
 // Root, Object and Arrays are not supported an will return an error if found.
 func (a *Array) AsStringCvt() ([]string, error) {
-	// Estimate length
-	lenEst := len(a.tape.Tape) - a.off - 1
+	// Estimate length, each scalar is 2 tape entries
+	lenEst := (len(a.tape.Tape) - a.off - 1) / 2
 	if lenEst < 0 {
 		lenEst = 0
 	}
