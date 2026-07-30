@@ -10,8 +10,16 @@ This is a Golang port of [simdjson](https://github.com/lemire/simdjson),
 a high performance JSON parser developed by Daniel Lemire and Geoff Langdale.
 It makes extensive use of SIMD instructions to achieve parsing performance of gigabytes of JSON per second.
 
-Performance wise, `simdjson-go` runs on average at about 40% to 60% of the speed of simdjson.
-Compared to Golang's standard package `encoding/json`, `simdjson-go` is about 10x faster.
+Parsing a document is about 10x faster than Golang's standard package `encoding/json`, and
+allocates three to five orders of magnitude less - see
+[Performance vs `encoding/json`](#performance-vs-encodingjson) for the measured figures, the
+machine they were taken on and the command that reproduces them. The two calls do not do the
+same amount of work, though: `Parse` builds a tape and stops, while `Unmarshal` builds a Go
+value out of every element. `benchmarks/` holds a group where both sides are asked for the
+same thing, and its README explains the asymmetries; on that footing simdjson-go is about
+2.7x faster than `encoding/json` and roughly level with sonic.
+
+How this compares to the C++ simdjson is not measured here.
 
 [![Documentation](https://godoc.org/github.com/minio/simdjson-go?status.svg)](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc)
 
@@ -375,92 +383,96 @@ To serialize a block of parsed data use the [`Serialize`](https://pkg.go.dev/git
 To read back use the [`Deserialize`](https://pkg.go.dev/github.com/minio/simdjson-go#Serializer.Deserialize) method.
 For deserializing the compression mode does not need to match since it is read from the stream.
 
-Example of speed for serializer/deserializer on [`parking-citations-1M`](https://dl.minio.io/assets/parking-citations-1M.json.zst).
+Speed and size on two documents from the test corpus, `twitter` (mostly strings) and
+`canada` (mostly floats), medians of three one-second runs on the machine named under
+[Performance vs `encoding/json`](#performance-vs-encodingjson). Reproduce with
+`go test -run '^$' -bench 'BenchmarkSerialize$|BenchmarkDeSerialize$'`:
 
-| Compress Mode | % of JSON size | Serialize Speed | Deserialize Speed |
-|---------------|----------------|-----------------|-------------------|
-| None          | 177.26%        | 425.70 MB/s     | 2334.33 MB/s      |
-| Fast          | 17.20%         | 412.75 MB/s     | 1234.76 MB/s      |
-| Default       | 16.85%         | 411.59 MB/s     | 1242.09 MB/s      |
-| Best          | 10.91%         | 337.17 MB/s     | 806.23 MB/s       |
+| Compress Mode | twitter: % of JSON | serialize | deserialize | canada: % of JSON | serialize | deserialize |
+|---|---|---|---|---|---|---|
+| None    | 69.9% | 3211 MB/s | 14777 MB/s | 69.3% | 4804 MB/s | 6789 MB/s |
+| Fast    | 11.0% | 1986 MB/s |  8625 MB/s | 36.2% | 1586 MB/s | 2887 MB/s |
+| Default | 10.6% | 1571 MB/s |  8645 MB/s | 29.7% |  770 MB/s | 2067 MB/s |
+| Best    |  7.3% | 1042 MB/s |  7947 MB/s | 24.2% |  501 MB/s | 1822 MB/s |
 
-In some cases the speed difference and compression difference will be bigger.
+String deduplication is what makes the difference between the two documents: `twitter`
+repeats a modest vocabulary and compresses to a tenth, while `canada` is two million
+distinct coordinates and has nothing to deduplicate. The earlier version of this table was
+measured on `parking-citations-1M`, which the asset host no longer serves, so it could not
+be reproduced.
 
 ## Performance vs `encoding/json`
 
-Though simdjson provides different output than traditional unmarshal functions this can give
-an overview of the expected performance for reading specific data in JSON.
+Parsing the benchmark corpus, against `encoding/json` unmarshalling the same documents into
+an `interface{}`. Both columns are medians of six one-second runs, taken with the parser
+warm - `Parse` reusing a `ParsedJson`, which is how a service would call it.
 
-Below is a performance comparison to Golang's standard package `encoding/json` based on the same set of JSON test files, unmarshal to `interface{}`.
+| document | `encoding/json` | simdjson, copy | simdjson, nocopy | faster by |
+|---|---|---|---|---|
+| apache_builds | 694 µs, 183 MB/s | 57 µs, 2225 MB/s | 56 µs, 2277 MB/s | 12.1x |
+| canada | 16.00 ms, 141 MB/s | 2.89 ms, 778 MB/s | 2.89 ms, 778 MB/s | 5.5x |
+| citm_catalog | 9.03 ms, 191 MB/s | 479 µs, 3603 MB/s | 471 µs, 3670 MB/s | 18.8x |
+| github_events | 339 µs, 192 MB/s | 25 µs, 2614 MB/s | 25 µs, 2582 MB/s | 13.6x |
+| gsoc-2018 | 12.36 ms, 269 MB/s | 445 µs, 7476 MB/s | 527 µs, 6317 MB/s | 27.7x |
+| instruments | 1.39 ms, 158 MB/s | 121 µs, 1825 MB/s | 120 µs, 1833 MB/s | 11.5x |
+| marine_ik | 25.45 ms, 117 MB/s | 3.21 ms, 928 MB/s | 3.22 ms, 926 MB/s | 7.9x |
+| mesh | 6.30 ms, 115 MB/s | 1.01 ms, 719 MB/s | 1.01 ms, 718 MB/s | 6.3x |
+| mesh.pretty | 9.21 ms, 171 MB/s | 1.13 ms, 1393 MB/s | 1.13 ms, 1394 MB/s | 8.1x |
+| numbers | 1.02 ms, 147 MB/s | 216 µs, 694 MB/s | 217 µs, 693 MB/s | 4.7x |
+| random | 3.62 ms, 141 MB/s | 323 µs, 1580 MB/s | 316 µs, 1616 MB/s | 11.2x |
+| twitter | 3.79 ms, 167 MB/s | 221 µs, 2863 MB/s | 224 µs, 2824 MB/s | 17.2x |
+| twitterescaped | 3.56 ms, 158 MB/s | 336 µs, 1676 MB/s | 459 µs, 1225 MB/s | 10.6x |
+| update-center | 3.59 ms, 149 MB/s | 268 µs, 1993 MB/s | 266 µs, 2004 MB/s | 13.4x |
 
-Comparisons with default settings:
+Geometric mean 10.8x, from 4.7x on an array of numbers to 27.7x on a large string-heavy
+document. The two ends of that range are the honest summary: the more of a document is
+strings and structure, the more there is for the vector code to do, and `numbers` is
+almost entirely `strconv`-shaped work that both libraries have to do byte by byte.
 
+Allocation is the other half, and the gap is larger:
+
+| document | `encoding/json` | simdjson, copy |
+|---|---|---|
+| apache_builds | 0.46 MB, 9719 allocs | 31 B, 1 alloc |
+| canada | 10.58 MB, 392514 allocs | 7.5 kB, 3 allocs |
+| citm_catalog | 5.13 MB, 95864 allocs | 1.2 kB, 3 allocs |
+| github_events | 0.18 MB, 3365 allocs | 21 B, 1 alloc |
+| gsoc-2018 | 7.03 MB, 58605 allocs | 3.1 kB, 3 allocs |
+| instruments | 0.87 MB, 13709 allocs | 62 B, 1 alloc |
+| marine_ik | 21.88 MB, 614774 allocs | 38 kB, 3 allocs |
+| mesh | 6.56 MB, 149495 allocs | 3.0 kB, 3 allocs |
+| mesh.pretty | 6.71 MB, 149495 allocs | 2.2 kB, 3 allocs |
+| numbers | 0.91 MB, 20023 allocs | 81 B, 1 alloc |
+| random | 2.81 MB, 68019 allocs | 484 B, 3 allocs |
+| twitter | 2.08 MB, 32124 allocs | 248 B, 3 allocs |
+| twitterescaped | 2.26 MB, 32620 allocs | 502 B, 3 allocs |
+| update-center | 2.71 MB, 50810 allocs | 251 B, 3 allocs |
+
+`encoding/json` allocates a Go value per element; simdjson-go appends to buffers a reused
+`ParsedJson` already owns. On a cold parse - a fresh `ParsedJson` every time - it allocates
+those buffers instead, which for these documents is between 1 MB and 14 MB.
+
+**What this comparison is not.** `Parse` builds a tape and stops; `Unmarshal` materialises
+every element as a Go value. Reading the tape afterwards costs more, and a caller who needs
+all of the document as Go values will not see 10x. `benchmarks/BenchmarkMaterialise` asks
+both sides for the same thing, and there the same corpus comes out at 2.7x with sonic
+roughly level with simdjson-go; `benchmarks/README.md` lists every asymmetry between the
+libraries and which of them were equalised. Compare within one group, never across.
+
+**How these were taken.** Go 1.26.0, linux/amd64, AMD Ryzen AI MAX+ 395, both columns
+pinned to two physical cores that share an L3 slice. To reproduce:
+
+```sh
+# simdjson-go, both copy modes, from the repository root
+taskset -c 2,3 go test -run '^$' -bench BenchmarkParseCorpus -benchtime 1s -count 6
+
+# encoding/json and sonic, from benchmarks/
+taskset -c 2,3 go test -run '^$' -bench 'BenchmarkEncodingJson|BenchmarkSonic' \
+    -benchtime 1s -count 6
 ```
-λ benchcmp enc-json.txt simdjson.txt
-benchmark                      old ns/op     new ns/op     delta
-BenchmarkApache_builds-32      1219080       142972        -88.27%
-BenchmarkCanada-32             38362219      13417193      -65.02%
-BenchmarkCitm_catalog-32       17051899      1359983       -92.02%
-BenchmarkGithub_events-32      603037        74042         -87.72%
-BenchmarkGsoc_2018-32          20777333      1259171       -93.94%
-BenchmarkInstruments-32        2626808       301370        -88.53%
-BenchmarkMarine_ik-32          56630295      14419901      -74.54%
-BenchmarkMesh-32               13411486      4206251       -68.64%
-BenchmarkMesh_pretty-32        18226803      4786081       -73.74%
-BenchmarkNumbers-32            2131951       909641        -57.33%
-BenchmarkRandom-32             7360966       1004387       -86.36%
-BenchmarkTwitter-32            6635848       588773        -91.13%
-BenchmarkTwitterescaped-32     6292856       972250        -84.55%
-BenchmarkUpdate_center-32      6396501       708717        -88.92%
 
-benchmark                      old MB/s     new MB/s     speedup
-BenchmarkApache_builds-32      104.40       890.21       8.53x
-BenchmarkCanada-32             58.68        167.77       2.86x
-BenchmarkCitm_catalog-32       101.29       1270.02      12.54x
-BenchmarkGithub_events-32      108.01       879.67       8.14x
-BenchmarkGsoc_2018-32          160.17       2642.88      16.50x
-BenchmarkInstruments-32        83.88        731.15       8.72x
-BenchmarkMarine_ik-32          52.68        206.90       3.93x
-BenchmarkMesh-32               53.95        172.03       3.19x
-BenchmarkMesh_pretty-32        86.54        329.57       3.81x
-BenchmarkNumbers-32            70.42        165.04       2.34x
-BenchmarkRandom-32             69.35        508.25       7.33x
-BenchmarkTwitter-32            95.17        1072.59      11.27x
-BenchmarkTwitterescaped-32     89.37        578.46       6.47x
-BenchmarkUpdate_center-32      83.35        752.31       9.03x
-
-benchmark                      old allocs     new allocs     delta
-BenchmarkApache_builds-32      9716           22             -99.77%
-BenchmarkCanada-32             392535         250            -99.94%
-BenchmarkCitm_catalog-32       95372          110            -99.88%
-BenchmarkGithub_events-32      3328           17             -99.49%
-BenchmarkGsoc_2018-32          58615          67             -99.89%
-BenchmarkInstruments-32        13336          33             -99.75%
-BenchmarkMarine_ik-32          614776         467            -99.92%
-BenchmarkMesh-32               149504         122            -99.92%
-BenchmarkMesh_pretty-32        149504         122            -99.92%
-BenchmarkNumbers-32            20025          28             -99.86%
-BenchmarkRandom-32             66083          76             -99.88%
-BenchmarkTwitter-32            31261          53             -99.83%
-BenchmarkTwitterescaped-32     31757          53             -99.83%
-BenchmarkUpdate_center-32      49074          58             -99.88%
-
-benchmark                      old bytes     new bytes     delta
-BenchmarkApache_builds-32      461556        965           -99.79%
-BenchmarkCanada-32             10943847      39793         -99.64%
-BenchmarkCitm_catalog-32       5122732       6089          -99.88%
-BenchmarkGithub_events-32      186148        802           -99.57%
-BenchmarkGsoc_2018-32          7032092       17215         -99.76%
-BenchmarkInstruments-32        882265        1310          -99.85%
-BenchmarkMarine_ik-32          22564413      189870        -99.16%
-BenchmarkMesh-32               7130934       15483         -99.78%
-BenchmarkMesh_pretty-32        7288661       12066         -99.83%
-BenchmarkNumbers-32            1066304       1280          -99.88%
-BenchmarkRandom-32             2787054       4096          -99.85%
-BenchmarkTwitter-32            2152260       2550          -99.88%
-BenchmarkTwitterescaped-32     2330548       3062          -99.87%
-BenchmarkUpdate_center-32      2729631       3235          -99.88%
-```
+Numbers from a different machine will differ; the ratios travel better than the absolutes,
+and the shape - which documents gain most - travels best of all.
 
 ### Inplace strings
 
@@ -472,51 +484,32 @@ but mandates that the original JSON buffer is kept alive until the `ParsedJson` 
 In case the JSON message buffer is freed earlier (or for streaming use cases where memory is reused)
 `WithCopyStrings(true)` should be used (which is the default behaviour).
 
-The performance impact differs based on the input type, but this is the general differences:
+The two are much closer than they used to be. Copying a string no longer means walking it a
+second time - the copy and the search for the closing quote are one pass, and a string with
+no escapes is copied with `append` rather than word by word - so the difference is now the
+memory traffic of the copy itself:
 
-```
-BenchmarkApache_builds/copy-32                	    8242	    142972 ns/op	 890.21 MB/s	     965 B/op	      22 allocs/op
-BenchmarkApache_builds/nocopy-32              	   10000	    111189 ns/op	1144.68 MB/s	     932 B/op	      22 allocs/op
+| document | copy | nocopy | difference |
+|---|---|---|---|
+| apache_builds | 2225 MB/s | 2277 MB/s | -2% |
+| citm_catalog | 3603 MB/s | 3670 MB/s | -2% |
+| github_events | 2614 MB/s | 2582 MB/s | +1% |
+| gsoc-2018 | 7476 MB/s | 6317 MB/s | +18% |
+| twitter | 2863 MB/s | 2824 MB/s | +1% |
+| twitterescaped | 1676 MB/s | 1225 MB/s | +37% |
+| update-center | 1993 MB/s | 1993 MB/s | 0% |
+| canada, mesh, numbers | \~equal | \~equal | 0% |
 
-BenchmarkCanada/copy-32                       	      91	  13417193 ns/op	 167.77 MB/s	   39793 B/op	     250 allocs/op
-BenchmarkCanada/nocopy-32                     	      87	  13392401 ns/op	 168.08 MB/s	   41334 B/op	     250 allocs/op
+Two of those want explaining, since they say copying is *faster*: `twitterescaped` and
+`gsoc-2018` are the documents where nearly every string carries escapes, and with
+`WithCopyStrings(false)` such a string still has to be decoded somewhere - it goes to the
+string buffer anyway - while the branch that avoids the copy entirely never fires. What the
+option really saves is the copy of strings that need no decoding, which is why the
+documents with plain strings show a couple of percent and the ones with none at all
+(canada, mesh, numbers) show nothing.
 
-BenchmarkCitm_catalog/copy-32                 	     889	   1359983 ns/op	1270.02 MB/s	    6089 B/op	     110 allocs/op
-BenchmarkCitm_catalog/nocopy-32               	     924	   1268470 ns/op	1361.64 MB/s	    5582 B/op	     110 allocs/op
-
-BenchmarkGithub_events/copy-32                	   16092	     74042 ns/op	 879.67 MB/s	     802 B/op	      17 allocs/op
-BenchmarkGithub_events/nocopy-32              	   19446	     62143 ns/op	1048.10 MB/s	     794 B/op	      17 allocs/op
-
-BenchmarkGsoc_2018/copy-32                    	     948	   1259171 ns/op	2642.88 MB/s	   17215 B/op	      67 allocs/op
-BenchmarkGsoc_2018/nocopy-32                  	    1144	   1040864 ns/op	3197.18 MB/s	    9947 B/op	      67 allocs/op
-
-BenchmarkInstruments/copy-32                  	    3932	    301370 ns/op	 731.15 MB/s	    1310 B/op	      33 allocs/op
-BenchmarkInstruments/nocopy-32                	    4443	    271500 ns/op	 811.59 MB/s	    1258 B/op	      33 allocs/op
-
-BenchmarkMarine_ik/copy-32                    	      79	  14419901 ns/op	 206.90 MB/s	  189870 B/op	     467 allocs/op
-BenchmarkMarine_ik/nocopy-32                  	      79	  14176758 ns/op	 210.45 MB/s	  189867 B/op	     467 allocs/op
-
-BenchmarkMesh/copy-32                         	     288	   4206251 ns/op	 172.03 MB/s	   15483 B/op	     122 allocs/op
-BenchmarkMesh/nocopy-32                       	     285	   4207299 ns/op	 171.99 MB/s	   15615 B/op	     122 allocs/op
-
-BenchmarkMesh_pretty/copy-32                  	     248	   4786081 ns/op	 329.57 MB/s	   12066 B/op	     122 allocs/op
-BenchmarkMesh_pretty/nocopy-32                	     250	   4803647 ns/op	 328.37 MB/s	   12009 B/op	     122 allocs/op
-
-BenchmarkNumbers/copy-32                      	    1336	    909641 ns/op	 165.04 MB/s	    1280 B/op	      28 allocs/op
-BenchmarkNumbers/nocopy-32                    	    1321	    910493 ns/op	 164.88 MB/s	    1281 B/op	      28 allocs/op
-
-BenchmarkRandom/copy-32                       	    1201	   1004387 ns/op	 508.25 MB/s	    4096 B/op	      76 allocs/op
-BenchmarkRandom/nocopy-32                     	    1554	    773142 ns/op	 660.26 MB/s	    3198 B/op	      76 allocs/op
-
-BenchmarkTwitter/copy-32                      	    2035	    588773 ns/op	1072.59 MB/s	    2550 B/op	      53 allocs/op
-BenchmarkTwitter/nocopy-32                    	    2485	    475949 ns/op	1326.85 MB/s	    2029 B/op	      53 allocs/op
-
-BenchmarkTwitterescaped/copy-32               	    1189	    972250 ns/op	 578.46 MB/s	    3062 B/op	      53 allocs/op
-BenchmarkTwitterescaped/nocopy-32             	    1372	    874972 ns/op	 642.77 MB/s	    2518 B/op	      53 allocs/op
-
-BenchmarkUpdate_center/copy-32                	    1665	    708717 ns/op	 752.31 MB/s	    3235 B/op	      58 allocs/op
-BenchmarkUpdate_center/nocopy-32              	    2241	    536027 ns/op	 994.68 MB/s	    2130 B/op	      58 allocs/op
-```
+So `WithCopyStrings(false)` is worth reaching for when the message will outlive the parse
+anyway. It is not worth restructuring a service around.
 
 ## Design
 
