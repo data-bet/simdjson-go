@@ -140,7 +140,7 @@ func BenchmarkSimdJsonMesh_pretty(b *testing.B)    { benchmarkSimdJson(b, "mesh.
 func BenchmarkSimdJsonNumbers(b *testing.B)        { benchmarkSimdJson(b, "numbers") }
 func BenchmarkSimdJsonRandom(b *testing.B)         { benchmarkSimdJson(b, "random") }
 func BenchmarkSimdJsonTwitter(b *testing.B)        { benchmarkSimdJson(b, "twitter") }
-func BenchmarkSimdJsonTwitterEscaped(b *testing.B) { benchmarkSimdJson(b, "twitterescaped") }
+func BenchmarkSimdJsonTwitterescaped(b *testing.B) { benchmarkSimdJson(b, "twitterescaped") }
 func BenchmarkSimdJsonUpdate_center(b *testing.B)  { benchmarkSimdJson(b, "update-center") }
 
 func BenchmarkBugerJsonParserLarge(b *testing.B) {
