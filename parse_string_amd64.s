@@ -9,6 +9,19 @@ DATA LCDATA1<>+0x020(SB)/8, $0x2222222222222222
 DATA LCDATA1<>+0x028(SB)/8, $0x2222222222222222
 DATA LCDATA1<>+0x030(SB)/8, $0x2222222222222222
 DATA LCDATA1<>+0x038(SB)/8, $0x2222222222222222
+
+// digittoval, based at LCDATA1+0x40, maps a byte to its value as a hex digit or to
+// -1. The 0x00 to 0x2f entries were left out of this block and so read as zero,
+// which made those bytes decode as the digit 0 rather than fail; \u00 followed by
+// two of them - a space and an exclamation mark, say, both legal inside a string -
+// decoded to a NUL instead of being rejected. They are spelled out now.
+DATA LCDATA1<>+0x040(SB)/8, $0xffffffffffffffff
+DATA LCDATA1<>+0x048(SB)/8, $0xffffffffffffffff
+DATA LCDATA1<>+0x050(SB)/8, $0xffffffffffffffff
+DATA LCDATA1<>+0x058(SB)/8, $0xffffffffffffffff
+DATA LCDATA1<>+0x060(SB)/8, $0xffffffffffffffff
+DATA LCDATA1<>+0x068(SB)/8, $0xffffffffffffffff
+
 DATA LCDATA1<>+0x070(SB)/8, $0x0706050403020100
 DATA LCDATA1<>+0x078(SB)/8, $0xffffffffffff0908
 DATA LCDATA1<>+0x080(SB)/8, $0xff0f0e0d0c0b0aff

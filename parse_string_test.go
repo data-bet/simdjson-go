@@ -16,6 +16,10 @@
 
 package simdjson
 
+// bs is one backslash, kept out of the literals below so they read as the bytes the
+// parser actually sees.
+const bs = `\`
+
 var tests = []struct {
 	name    string
 	str     string
@@ -230,6 +234,46 @@ var tests = []struct {
 	{
 		name:    "uni1-end-of-ymm-word-single-fail-three-beyond",
 		str:     `---------9---------9---------\u20a`,
+		success: false,
+	},
+	// A hex escape needs four hex digits. Every byte below 0x30 used to read as the
+	// digit 0, because the table the assembly carries simply left those entries out,
+	// so these decoded to a NUL rather than being rejected. The sixteen bytes from
+	// 0x20 to 0x2f are legal inside a string, so Parse reached this and not only a
+	// unit test.
+	{
+		name:    "hex-nonhex-space-bang",
+		str:     bs + "u00 !",
+		success: false,
+	},
+	{
+		name:    "hex-nonhex-comma-dash",
+		str:     bs + "u00,-",
+		success: false,
+	},
+	{
+		name:    "hex-nonhex-leading-plus",
+		str:     bs + "u+000",
+		success: false,
+	},
+	{
+		name:    "hex-nonhex-middle-space",
+		str:     bs + "u0 00",
+		success: false,
+	},
+	{
+		name:    "hex-nonhex-slash-dot",
+		str:     bs + "u00/.",
+		success: false,
+	},
+	{
+		name:    "hex-nonhex-nul",
+		str:     bs + "u00\x00\x00",
+		success: false,
+	},
+	{
+		name:    "hex-surrogate-low-nonhex",
+		str:     bs + "ud83d\\ude0 ",
 		success: false,
 	},
 }
