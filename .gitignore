@@ -1,0 +1,15 @@
+/.idea/
+/.vscode/
+
+# Corpora that loadFile fetches on demand rather than keeping in the repo.
+/testdata/parking-citations-1M.json.zst
+/testdata/RC_2009-01.json.zst
+
+# Build and profiling output.
+*.test
+*.out
+*.prof
+
+# Editor leftovers.
+*.swp
+*.swo

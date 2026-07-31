@@ -254,7 +254,7 @@ func TestNdjsonCountWhere(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping... too long")
 	}
-	ndjson := loadFile("testdata/parking-citations.json.zst")
+	ndjson := loadFile(t, "testdata/parking-citations.json.zst")
 	pj, err := ParseND(ndjson, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -322,7 +322,7 @@ func TestNdjsonCountWhere2(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping... too long")
 	}
-	ndjson := loadFile("testdata/RC_2009-01.json.zst")
+	ndjson := loadFile(t, "testdata/RC_2009-01.json.zst")
 	// Test trimming
 	b := make([]byte, 0, len(ndjson)+4)
 	b = append(b, '\n', '\n')
@@ -363,11 +363,20 @@ func TestNdjsonCountWhere2(t *testing.T) {
 	})
 }
 
-func loadFile(filename string) []byte {
+// loadFile returns a test corpus, fetching and caching it when the repository does
+// not ship the file.
+//
+// The corpora too large to commit live on an external host, and it no longer serves
+// all of them - parking-citations-1M.json.zst and RC_2009-01.json.zst both answer
+// 404. A corpus that cannot be obtained skips the caller rather than failing it:
+// there is nothing wrong with the code under test, and a hard failure there made
+// `go test ./...` unusable. Anything else is still fatal.
+func loadFile(tb testing.TB, filename string) []byte {
+	tb.Helper()
 	if !strings.HasSuffix(filename, ".zst") {
 		ndjson, err := ioutil.ReadFile(filename)
 		if err != nil {
-			panic("Failed to load file")
+			tb.Skipf("corpus %s is unavailable: %v", filename, err)
 		}
 		return ndjson
 	}
@@ -379,31 +388,36 @@ func loadFile(filename string) []byte {
 			defer f.Close()
 			break
 		}
-		if os.IsNotExist(err) {
-			fmt.Println("downloading file", filename)
-			resp, err := http.DefaultClient.Get("https://dl.minio.io/assets/" + filepath.Base(filename))
-			if err == nil && resp.StatusCode == http.StatusOK {
-				b, err := ioutil.ReadAll(resp.Body)
-				if err == nil {
-					err = ioutil.WriteFile(filename, b, os.ModePerm)
-					if err == nil {
-						continue
-					}
-					panic("Failed to write file:" + err.Error())
-				}
-				panic("Failed to read file:" + err.Error())
-			}
-			panic("Failed to download file:" + err.Error())
+		if !os.IsNotExist(err) {
+			tb.Fatalf("opening %s: %v", filename, err)
+		}
+		fmt.Println("downloading file", filename)
+		resp, err := http.DefaultClient.Get("https://dl.minio.io/assets/" + filepath.Base(filename))
+		if err != nil {
+			tb.Skipf("corpus %s could not be downloaded: %v", filename, err)
+		}
+		// err is nil here, so it cannot be used to describe a bad status.
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			tb.Skipf("corpus %s could not be downloaded: %s", filename, resp.Status)
+		}
+		b, err := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			tb.Skipf("corpus %s could not be read: %v", filename, err)
+		}
+		if err = ioutil.WriteFile(filename, b, os.ModePerm); err != nil {
+			tb.Fatalf("writing %s: %v", filename, err)
 		}
 	}
 	dec, err := zstd.NewReader(f)
 	if err != nil {
-		panic("Failed to create decompressor")
+		tb.Fatalf("creating decompressor for %s: %v", filename, err)
 	}
 	defer dec.Close()
 	ndjson, err := ioutil.ReadAll(dec)
 	if err != nil {
-		panic("Failed to load file")
+		tb.Fatalf("decompressing %s: %v", filename, err)
 	}
 	return ndjson
 }
@@ -490,7 +504,7 @@ func BenchmarkNdjsonWarmCountStar(b *testing.B) {
 		b.SkipNow()
 	}
 
-	ndjson := loadFile("testdata/parking-citations-1M.json.zst")
+	ndjson := loadFile(b, "testdata/parking-citations-1M.json.zst")
 
 	pj, err := ParseND(ndjson, nil)
 	if err != nil {
@@ -510,7 +524,7 @@ func BenchmarkNdjsonWarmCountStarWithWhere(b *testing.B) {
 		b.SkipNow()
 	}
 
-	ndjson := loadFile("testdata/parking-citations-1M.json.zst")
+	ndjson := loadFile(b, "testdata/parking-citations-1M.json.zst")
 
 	pj, err := ParseND(ndjson, nil)
 	if err != nil {
