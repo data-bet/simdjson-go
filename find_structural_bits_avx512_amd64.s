@@ -1,4 +1,4 @@
-//+build !noasm !appengine gc
+//go:build !noasm && !appengine && gc
 
 #include "common.h"
 

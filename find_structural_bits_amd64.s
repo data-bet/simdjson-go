@@ -1,4 +1,4 @@
-//+build !noasm !appengine gc
+//go:build !noasm && !appengine && gc
 
 TEXT ·_find_structural_bits(SB), $0-72
 

@@ -1,4 +1,4 @@
-//+build !noasm !appengine gc
+//go:build !noasm && !appengine && gc
 
 // _find_newline_delimiters(raw []byte) (mask uint64)
 TEXT ·_find_newline_delimiters(SB), 7, $0
