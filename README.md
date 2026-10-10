@@ -19,10 +19,15 @@ What differs from upstream `v0.4.5`:
 - Parsing is about 35% faster than upstream with the default `WithCopyStrings(true)`
   (geometric mean over the test corpus), and `ParseND` with a reused `ParsedJson`
   allocates almost nothing.
+- Reading a parsed document is about 30% faster (geometric mean over
+  `BenchmarkIterRead`): a walk with `AdvanceInto` by 30-39%, one that also reads every
+  value by 25-31%, one through `Object` and `NextElementBytes` by 12-22%, and one
+  through `AdvanceIter` by 43-51%.
 - Several inputs that upstream mishandled are fixed: nesting is capped at 1024 levels, as in
   simdjson, instead of being unbounded; a string scan bound that never fired now does; hex
   escapes with non-hex digits are rejected; and `ParseND` reuses the `ParsedJson` it is
   given. Some malformed documents that upstream accepted are therefore rejected now.
+  On a corrupt tape `NextElementBytes` returns an error where it overflowed the stack.
 - Platforms without the amd64 assembly get a portable implementation instead of an error,
   and `arm64` classifies with NEON - see [Requirements](#requirements).
 - Optional UTF-8 validation with `WithValidateUTF8(true)`.
