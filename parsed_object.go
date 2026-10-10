@@ -323,10 +323,8 @@ func (o *Object) NextElement(dst *Iter) (name string, t Type, err error) {
 	return string(n), t, err
 }
 
-// NextElementBytes sets dst to the next element and returns the name.
-// TypeNone with nil error will be returned if there are no more elements.
-// Contrary to NextElement this will not cause allocations.
-func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
+// nextElementBytes is NextElementBytes for every case.
+func (o *Object) nextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 	// Advance must be string or end of object
 	for {
 		if o.off >= len(o.tape.Tape) {
@@ -342,8 +340,6 @@ func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 			}
 			length := o.tape.Tape[o.off+1]
 			offset := v & JSONVALUEMASK
-			// The inlinable form: a key name is read for every element of every object,
-			// which made the call itself worth removing.
 			var ok bool
 			if name, ok = o.tape.stringBytes(offset, length); !ok {
 				return nil, TypeNone, fmt.Errorf("parsing object element name: %w",
@@ -391,6 +387,46 @@ func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 	// Skip to next element
 	o.off += elemSize
 	return name, TagToType[dst.t], nil
+}
+
+// NextElementBytes sets dst to the next element and returns the name.
+// TypeNone with nil error will be returned if there are no more elements.
+// Contrary to NextElement this will not cause allocations.
+func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
+	// The common case - a key whose name lies within its area, followed by an element
+	// that ends within the tape - is one straight run, with no switch on either tag: a
+	// branch on whether the element has a value word, and one on whether it is a
+	// container, taken only for one. Everything else - the end of the object, NOPs and
+	// every error - is left to nextElementBytes.
+	off, tape := o.off, o.tape.Tape
+	if off+2 < len(tape) {
+		if v := tape[off]; Tag(v>>56) == TagString {
+			// The inlinable form: a key name is read for every element of every object,
+			// which made the call itself worth removing.
+			if n, ok := o.tape.stringBytes(v&JSONVALUEMASK, tape[off+1]); ok {
+				v = tape[off+2]
+				off += 3
+				t, cur := Tag(v>>56), v&JSONVALUEMASK
+				size, into := 0, 0
+				if valueTags>>(t&63)&1 != 0 {
+					size, into = 1, 1
+				} else if t == TagObjectStart || t == TagArrayStart || t == TagRoot {
+					size = int(cur) - off
+				}
+				if end := off + size; size >= 0 && end <= len(tape) {
+					dst.cur = cur
+					dst.t = t
+					dst.off = off
+					dst.addNext = into
+					dst.tape = o.tape
+					dst.tape.Tape = tape[:end]
+					o.off = end
+					return n, TagToType[t], nil
+				}
+			}
+		}
+	}
+	return o.nextElementBytes(dst)
 }
 
 // Element represents an element in an object.

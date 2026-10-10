@@ -17,6 +17,7 @@
 package simdjson
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -55,6 +56,71 @@ func advanceReference(i *Iter) Type {
 	return TagToType[i.t]
 }
 
+func nextElementBytesReference(o *Object, dst *Iter) (name []byte, t Type, err error) {
+	// Advance must be string or end of object
+	for {
+		if o.off >= len(o.tape.Tape) {
+			return nil, TypeNone, nil
+		}
+		v := o.tape.Tape[o.off]
+		switch Tag(v >> 56) {
+		case TagString:
+			// Read name:
+			// We want name and at least one value.
+			if o.off+2 >= len(o.tape.Tape) {
+				return nil, TypeNone, fmt.Errorf("parsing object element name: unexpected end of tape")
+			}
+			length := o.tape.Tape[o.off+1]
+			offset := v & JSONVALUEMASK
+			var ok bool
+			if name, ok = o.tape.stringBytes(offset, length); !ok {
+				return nil, TypeNone, fmt.Errorf("parsing object element name: %w",
+					o.tape.stringOutsideArea(offset, length))
+			}
+			o.off += 2
+		case TagObjectEnd:
+			return nil, TypeNone, nil
+		case TagNop:
+			// A skip of zero would come back here forever.
+			skip := int(v & JSONVALUEMASK)
+			if skip <= 0 {
+				return nil, TypeNone, errors.New("invalid nop skip")
+			}
+			o.off += skip
+			continue
+		default:
+			return nil, TypeNone, fmt.Errorf("object: unexpected tag %c", byte(v>>56))
+		}
+		break
+	}
+
+	// Read element type
+	v := o.tape.Tape[o.off]
+	// Move to value (if any)
+	o.off++
+
+	// Set dst
+	dst.cur = v & JSONVALUEMASK
+	dst.t = Tag(v >> 56)
+	dst.off = o.off
+	dst.tape = o.tape
+	dst.calcNext(false)
+	elemSize := dst.addNext
+	dst.calcNext(true)
+	if elemSize < 0 {
+		// The element would end before it starts, and the object move back.
+		return nil, TypeNone, errors.New("element has negative offset")
+	}
+	if dst.off+elemSize > len(dst.tape.Tape) {
+		return nil, TypeNone, errors.New("element extends beyond tape")
+	}
+	dst.tape.Tape = dst.tape.Tape[:dst.off+elemSize]
+
+	// Skip to next element
+	o.off += elemSize
+	return name, TagToType[dst.t], nil
+}
+
 // sameIter reports how two Iters differ, or "" if they do not: every field, and for the
 // tape, which words it covers.
 func sameIter(got, want *Iter) string {
@@ -68,6 +134,13 @@ func sameIter(got, want *Iter) string {
 			len(got.tape.Tape), cap(got.tape.Tape), len(want.tape.Tape), cap(want.tape.Tape))
 	}
 	return ""
+}
+
+func sameErr(got, want error) bool {
+	if got == nil || want == nil {
+		return got == want
+	}
+	return got.Error() == want.Error()
 }
 
 // panics runs f and reports whether it panicked, so that a reference that panics on a
@@ -225,5 +298,50 @@ func TestAdvanceMatchesReference(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestNextElementBytesMatchesReference(t *testing.T) {
+	if !SupportedCPU() {
+		t.SkipNow()
+	}
+	keys := 0
+	for _, dt := range diffTapes(t) {
+		for _, start := range dt.starts {
+			// From every tag, not only after an object's start: the first step from
+			// anywhere else is the unexpected-tag error, or a key at a NOP's end.
+			got, want := Object{tape: *dt.pj, off: start}, Object{tape: *dt.pj, off: start}
+			var gotDst, wantDst Iter
+			for step := 0; step < stepsPerStart; step++ {
+				var gn, wn []byte
+				var gt, wt Type
+				var ge, we error
+				gp := panics(func() { gn, gt, ge = got.NextElementBytes(&gotDst) })
+				wp := panics(func() { wn, wt, we = nextElementBytesReference(&want, &wantDst) })
+				where := fmt.Sprintf("%s from %d, step %d", dt.name, start, step)
+				if gp != wp {
+					t.Fatalf("%s: panicked %v, want %v", where, gp, wp)
+				}
+				if gp {
+					break
+				}
+				if string(gn) != string(wn) || gt != wt || !sameErr(ge, we) {
+					t.Fatalf("%s: %q, %v, %v, want %q, %v, %v", where, gn, gt, ge, wn, wt, we)
+				}
+				if got.off != want.off {
+					t.Fatalf("%s: the object at %d, want %d", where, got.off, want.off)
+				}
+				if diff := sameIter(&gotDst, &wantDst); diff != "" {
+					t.Fatalf("%s: dst: %s", where, diff)
+				}
+				if ge != nil || gt == TypeNone {
+					break
+				}
+				keys++
+			}
+		}
+	}
+	if keys == 0 {
+		t.Fatal("no walk read a single key")
 	}
 }
