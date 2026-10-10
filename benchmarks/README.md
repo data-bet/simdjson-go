@@ -151,11 +151,12 @@ workers on 1-6 and 9-14), A/A runs of the `read` and `corpus` groups gave:
 
 Twelve workers and twice the rounds are as quiet as one worker on `read` and twice as
 noisy on `corpus`, in a sixth of the time; and a real change measured both ways agreed
-to within a point on every benchmark that does not allocate (-20.2% and -19.9% geomean).
-The exceptions are the allocation-heavy rows, `IterRead/*/objects` with megabytes per
-operation, which share memory bandwidth and the collector's work with eleven
-neighbours and moved by 3-6% in either direction; their controls move with them. For a
-difference of a percent or less, measure on one worker.
+to within a point on every benchmark that did not allocate (-20.2% and -19.9% geomean).
+The exceptions were the `IterRead/*/objects` rows, which then allocated megabytes per
+operation, shared memory bandwidth and the collector's work with eleven neighbours, and
+moved by 3-6% in either direction, their controls with them; they no longer allocate.
+A benchmark that allocates measures the collector as well, on one worker or twelve. For
+a difference of a percent or less, measure on one worker.
 
 ```sh
 benchmarks/perfgate/ab.sh -g read -b master -h HEAD -r 6 -c 1,2,3,4,5,6,9,10,11,12,13,14

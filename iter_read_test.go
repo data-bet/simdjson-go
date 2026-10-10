@@ -70,12 +70,21 @@ func walkTypedTape(tb testing.TB, pj *ParsedJson, stack []Iter) int {
 	return n
 }
 
-func walkObjects(tb testing.TB, pj *ParsedJson, stack []Iter) int {
+// walkObjects keeps the stack it grew in *keep: unlike the other walks it holds every
+// container still to visit, not one per level, and growing it again on every call made
+// the benchmark mostly a measure of the garbage collector - with every Iter copied
+// through a write barrier while it marked.
+func walkObjects(tb testing.TB, pj *ParsedJson, keep *[]Iter) int {
 	tb.Helper()
 	n := 0
 	var obj Object
 	var elem Iter
-	stack = append(stack[:0], pj.Iter())
+	var stack []Iter
+	if keep != nil {
+		stack = (*keep)[:0]
+		defer func() { *keep = stack[:0] }()
+	}
+	stack = append(stack, pj.Iter())
 	for len(stack) > 0 {
 		it := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -200,7 +209,7 @@ func BenchmarkIterRead(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				walkObjects(b, pj, stack)
+				walkObjects(b, pj, &stack)
 			}
 		})
 	}
