@@ -1,0 +1,139 @@
+name: Performance calibration
+
+# Runs the performance gate where the right answer is known, to set and check its
+# thresholds:
+#
+#   - A/A: a revision against itself, many times. Every regression it reports is a
+#     false alarm, and how far these runs stray is what the thresholds are set from.
+#   - known: an optimisation from the history undone - head is the commit before it,
+#     base the commit itself - so each is a regression of known rough size that the
+#     gate should catch.
+#
+# Everything runs pinned to one vCPU, as the gate does: on the first calibration the
+# pinned A/A runs strayed less than unpinned ones in every group (corpus p90 1.2% against
+# 1.9%, stage1 median 0.2% against 0.5%).
+#
+# Run it by hand after changing benchmarks/perfgate, the benchmark groups, or the
+# runner image, and whenever the gate's verdicts stop looking believable. The inputs
+# fall back to defaults so that a branch can also run it from a push trigger.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rev:
+        description: 'Revision for the A/A runs'
+        required: true
+        default: 'HEAD'
+      runs:
+        description: 'A/A runs per benchmark group'
+        required: true
+        type: number
+        default: 8
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: 0
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      runs: ${{ steps.plan.outputs.runs }}
+    steps:
+    - id: plan
+      env:
+        RUNS: ${{ inputs.runs || 8 }}
+      run: echo "runs=$(jq -cn --argjson n "$RUNS" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
+
+  aa:
+    name: aa (${{ matrix.group }} ${{ matrix.run }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [ corpus, stage1, read ]
+        run: ${{ fromJSON(needs.plan.outputs.runs) }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 1.26.x
+        cache-dependency-path: |
+          go.sum
+          benchmarks/go.sum
+    - name: Measure
+      env:
+        REV: ${{ inputs.rev || 'HEAD' }}
+      run: >
+        benchmarks/perfgate/ab.sh -n -g ${{ matrix.group }}
+        -b "$REV" -h "$REV" -l aa-${{ matrix.group }}-${{ matrix.run }}
+        -c 1 -o "$RUNNER_TEMP/perf"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: report-aa-${{ matrix.group }}-${{ matrix.run }}
+        path: ${{ runner.temp }}/perf
+
+  known:
+    name: known (${{ matrix.label }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        # BLSR in the stage 1 index writer: about -13% on stage 1.
+        - { group: stage1, label: stage1-blsr, base: 16d0a97, head: 558fa44 }
+        # Skipping the decode pass for escape-free strings: about -4% on the corpus.
+        - { group: corpus, label: corpus-skip-decode, base: e1b50ec, head: 7c1a834 }
+        # The local cursor over the structural indexes: about -1.5%, below the floor.
+        - { group: corpus, label: corpus-local-cursor, base: 37feb7f, head: 16d0a97 }
+        # Reading a string out of the tape without a call: about -4% on reading.
+        - { group: read, label: read-string, base: d8a03c3, head: 8dd8dbe }
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 1.26.x
+        cache-dependency-path: |
+          go.sum
+          benchmarks/go.sum
+    - name: Measure
+      run: >
+        benchmarks/perfgate/ab.sh -n -g ${{ matrix.group }}
+        -b ${{ matrix.base }} -h ${{ matrix.head }} -l known-${{ matrix.label }}
+        -c 1 -o "$RUNNER_TEMP/perf"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: report-known-${{ matrix.label }}
+        path: ${{ runner.temp }}/perf
+
+  summary:
+    needs: [ aa, known ]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 1.26.x
+        cache-dependency-path: benchmarks/go.sum
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: report-*
+        path: ${{ runner.temp }}/reports
+    - name: Calibrate
+      working-directory: benchmarks
+      run: |
+        for group in corpus stage1 read; do
+          echo "## $group" >> "$GITHUB_STEP_SUMMARY"
+          go run ./perfgate calibrate -md "$GITHUB_STEP_SUMMARY" \
+            $(find "$RUNNER_TEMP/reports" -path "*-$group-*/report.json" | sort)
+        done
