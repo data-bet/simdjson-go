@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/minio/simdjson-go"
+	"github.com/data-bet/simdjson-go"
 	"os"
 	"sync"
 )

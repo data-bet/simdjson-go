@@ -102,7 +102,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/bytedance/sonic/ast"
 
-	simdjson "github.com/minio/simdjson-go"
+	simdjson "github.com/data-bet/simdjson-go"
 )
 
 // sink keeps a result reachable so that no row can be optimised away for producing

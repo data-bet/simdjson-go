@@ -4,6 +4,30 @@ This is [DATA.BET](https://data.bet)'s fork of
 [minio/simdjson-go](https://github.com/minio/simdjson-go). [NOTICE](NOTICE) says which
 parts were inherited, which were changed here, and under which licence each stands.
 
+The API is the same as upstream's, so moving over is a change of import path:
+
+```bash
+go get github.com/data-bet/simdjson-go@latest
+```
+
+```Go
+import "github.com/data-bet/simdjson-go"
+```
+
+What differs from upstream `v0.4.5`:
+
+- Parsing is about 35% faster than upstream with the default `WithCopyStrings(true)`
+  (geometric mean over the test corpus), and `ParseND` with a reused `ParsedJson`
+  allocates almost nothing.
+- Several inputs that upstream mishandled are fixed: nesting is capped at 1024 levels, as in
+  simdjson, instead of being unbounded; a string scan bound that never fired now does; hex
+  escapes with non-hex digits are rejected; and `ParseND` reuses the `ParsedJson` it is
+  given. Some malformed documents that upstream accepted are therefore rejected now.
+- Platforms without the amd64 assembly get a portable implementation instead of an error,
+  and `arm64` classifies with NEON - see [Requirements](#requirements).
+- Optional UTF-8 validation with `WithValidateUTF8(true)`.
+- Go 1.25 or newer is required.
+
 ## Introduction
 
 This is a Golang port of [simdjson](https://github.com/lemire/simdjson),
@@ -21,7 +45,7 @@ same thing, and its README explains the asymmetries; on that footing simdjson-go
 
 How this compares to the C++ simdjson is not measured here.
 
-[![Documentation](https://godoc.org/github.com/minio/simdjson-go?status.svg)](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc)
+[![Documentation](https://godoc.org/github.com/data-bet/simdjson-go?status.svg)](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc)
 
 ## Features
 
@@ -68,7 +92,7 @@ assembly over the corpus on `amd64`, and by `stage1_classify_arm64_test.go`, whi
 the same the other way round on `arm64`.
 
 A CPU with both AVX2 and CLMUL is required for the fast path (Haswell from 2013 onwards should do for Intel, for AMD a Ryzen/EPYC CPU (Q1 2017) should be sufficient).
-This can be checked using the provided [`SupportedCPU()`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#SupportedCPU) function.
+This can be checked using the provided [`SupportedCPU()`](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#SupportedCPU) function.
 
 An `amd64` CPU older than that is the one case with no fallback in the default build.
 Building with `-tags=noasm` gives it the portable implementation. It is not selected
@@ -82,15 +106,15 @@ Serialized data can be deserialized anywhere, on any CPU.
 Run the following command in order to install `simdjson-go`
 
 ```bash
-go get -u github.com/minio/simdjson-go
+go get -u github.com/data-bet/simdjson-go
 ```
 
-In order to parse a JSON byte stream, you either call [`simdjson.Parse()`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#Parse)
-or [`simdjson.ParseND()`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#ParseND) for newline delimited JSON files.
-Both of these functions return a [`ParsedJson`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#ParsedJson)
-struct that can be used to navigate the JSON object by calling [`Iter()`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#ParsedJson.Iter).
+In order to parse a JSON byte stream, you either call [`simdjson.Parse()`](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#Parse)
+or [`simdjson.ParseND()`](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#ParseND) for newline delimited JSON files.
+Both of these functions return a [`ParsedJson`](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#ParsedJson)
+struct that can be used to navigate the JSON object by calling [`Iter()`](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#ParsedJson.Iter).
 
-The easiest use is to call [`ForEach()`]((https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#ParsedJson.ForEach)) function of the returned `ParsedJson`.
+The easiest use is to call [`ForEach()`]((https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#ParsedJson.ForEach)) function of the returned `ParsedJson`.
 
 ```Go
 func main() {
@@ -119,8 +143,8 @@ func main() {
 
 ### Parsing with iterators
 
-Using the type [`Iter`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#Iter) you can call
-[`Advance()`](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc#Iter.Advance) to iterate over the tape, like so:
+Using the type [`Iter`](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#Iter) you can call
+[`Advance()`](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc#Iter.Advance) to iterate over the tape, like so:
 
 ```Go
 for {
@@ -167,7 +191,7 @@ Each type then has helpers to access the data. When you get a type you can use t
 | TypeArray  | `Array()`                  |
 | TypeRoot   | `Root()`                   |
 
-You can also get the next value as an `interface{}` using the [Interface()](https://pkg.go.dev/github.com/minio/simdjson-go#Iter.Interface) method.
+You can also get the next value as an `interface{}` using the [Interface()](https://pkg.go.dev/github.com/data-bet/simdjson-go#Iter.Interface) method.
 
 Note that arrays and objects that are null are always returned as `TypeNull`.
 
@@ -176,8 +200,8 @@ The complex types returns helpers that will help parse each of the underlying st
 It is up to you to keep track of the nesting level you are operating at.
 
 For any `Iter` it is possible to marshal the recursive content of the Iter using
-[`MarshalJSON()`](https://pkg.go.dev/github.com/minio/simdjson-go#Iter.MarshalJSON) or
-[`MarshalJSONBuffer(...)`](https://pkg.go.dev/github.com/minio/simdjson-go#Iter.MarshalJSONBuffer).
+[`MarshalJSON()`](https://pkg.go.dev/github.com/data-bet/simdjson-go#Iter.MarshalJSON) or
+[`MarshalJSONBuffer(...)`](https://pkg.go.dev/github.com/data-bet/simdjson-go#Iter.MarshalJSONBuffer).
 
 Currently, it is not possible to unmarshal into structs.
 
@@ -202,7 +226,7 @@ Will locate the field inside a json object with the following structure:
 }
 ```
 
-The values can be any type. The [Element](https://pkg.go.dev/github.com/minio/simdjson-go#Element)
+The values can be any type. The [Element](https://pkg.go.dev/github.com/data-bet/simdjson-go#Element)
 will contain the element information and an Iter to access the content.
 
 ## Parsing Objects
@@ -218,7 +242,7 @@ and the provided `Iter` will contain an iterator which will allow access to the 
 
 There is a `NextElementBytes` which provides the same, but without the need to allocate a string.
 
-All elements of the object can be retrieved using a pretty lightweight [`Parse`](https://pkg.go.dev/github.com/minio/simdjson-go#Object.Parse)
+All elements of the object can be retrieved using a pretty lightweight [`Parse`](https://pkg.go.dev/github.com/data-bet/simdjson-go#Object.Parse)
 which provides a map of all keys and all elements an a slide.
 
 All elements of the object can be returned as `map[string]interface{}` using the `Map` method on the object.
@@ -226,11 +250,11 @@ This will naturally perform allocations for all elements.
 
 ## Parsing Arrays
 
-[Arrays](https://pkg.go.dev/github.com/minio/simdjson-go#Array) in JSON can have mixed types.
+[Arrays](https://pkg.go.dev/github.com/data-bet/simdjson-go#Array) in JSON can have mixed types.
 
 It is possible to call `ForEach(fn func(i Iter))` to get each element.
 
-To iterate over the array with mixed types use the [`Iter`](https://pkg.go.dev/github.com/minio/simdjson-go#Array.Iter)
+To iterate over the array with mixed types use the [`Iter`](https://pkg.go.dev/github.com/data-bet/simdjson-go#Array.Iter)
 method to get an iterator.
 
 There are methods that allow you to retrieve all elements as a single type,
@@ -307,7 +331,7 @@ func findHondas(r io.Reader) {
 }
 ```
 
-More examples can be found in the examples subdirectory and further documentation can be found at [godoc](https://pkg.go.dev/github.com/minio/simdjson-go?tab=doc).
+More examples can be found in the examples subdirectory and further documentation can be found at [godoc](https://pkg.go.dev/github.com/data-bet/simdjson-go?tab=doc).
 
 
 ### In-place Value Replacement
@@ -372,15 +396,15 @@ If the function returns true the element is deleted in the array.
 
 It is possible to serialize parsed JSON for more compact storage and faster load time.
 
-To create a new serialized use [NewSerializer](https://pkg.go.dev/github.com/minio/simdjson-go#NewSerializer).
+To create a new serialized use [NewSerializer](https://pkg.go.dev/github.com/data-bet/simdjson-go#NewSerializer).
 This serializer can be reused for several JSON blocks.
 
 The serializer will provide string deduplication and compression of elements.
-This can be finetuned using the [`CompressMode`](https://pkg.go.dev/github.com/minio/simdjson-go#Serializer.CompressMode) setting.
+This can be finetuned using the [`CompressMode`](https://pkg.go.dev/github.com/data-bet/simdjson-go#Serializer.CompressMode) setting.
 
-To serialize a block of parsed data use the [`Serialize`](https://pkg.go.dev/github.com/minio/simdjson-go#Serializer.Serialize) method.
+To serialize a block of parsed data use the [`Serialize`](https://pkg.go.dev/github.com/data-bet/simdjson-go#Serializer.Serialize) method.
 
-To read back use the [`Deserialize`](https://pkg.go.dev/github.com/minio/simdjson-go#Serializer.Deserialize) method.
+To read back use the [`Deserialize`](https://pkg.go.dev/github.com/data-bet/simdjson-go#Serializer.Deserialize) method.
 For deserializing the compression mode does not need to match since it is read from the stream.
 
 Speed and size on two documents from the test corpus, `twitter` (mostly strings) and

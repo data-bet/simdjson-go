@@ -1,4 +1,4 @@
-module github.com/minio/simdjson-go
+module github.com/data-bet/simdjson-go
 
 go 1.25.0
 

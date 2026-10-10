@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/minio/simdjson-go"
+	"github.com/data-bet/simdjson-go"
 )
 
 func main() {

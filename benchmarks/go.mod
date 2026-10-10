@@ -1,15 +1,15 @@
-module github.com/minio/simdjson-go/benchmarks
+module github.com/data-bet/simdjson-go/benchmarks
 
 go 1.25.0
 
 require (
 	github.com/buger/jsonparser v1.2.0
 	github.com/bytedance/sonic v1.15.2
+	github.com/data-bet/simdjson-go v0.0.0-00010101000000-000000000000
 	github.com/klauspost/compress v1.19.1
-	github.com/minio/simdjson-go v0.0.0-00010101000000-000000000000
 )
 
-replace github.com/minio/simdjson-go => ../
+replace github.com/data-bet/simdjson-go => ../
 
 require (
 	github.com/aclements/go-moremath v0.0.0-20210112150236-f10218a38794 // indirect

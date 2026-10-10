@@ -27,7 +27,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/klauspost/compress/zstd"
 
-	simdjson "github.com/minio/simdjson-go"
+	simdjson "github.com/data-bet/simdjson-go"
 )
 
 func benchmarkEncodingJson(b *testing.B, filename string) {
@@ -177,7 +177,7 @@ func BenchmarkBugerJsonParserLarge(b *testing.B) {
 	}
 }
 
-// tester and loadCompressed should be kept in sync with minio/simdjson-go/parsed_json_test.go.
+// tester and loadCompressed should be kept in sync with ../parsed_json_test.go.
 type tester interface {
 	Fatal(args ...interface{})
 }
