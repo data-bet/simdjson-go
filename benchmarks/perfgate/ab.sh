@@ -6,7 +6,7 @@
 # result with perfgate.
 #
 #   ab.sh -b BASE -h HEAD (-g GROUP | -p PATTERN) [-v VARIANTS] [-r ROUNDS]
-#         [-t BENCHTIME] [-o OUTDIR] [-l LABEL] [-c CPU] [-n]
+#         [-t BENCHTIME] [-o OUTDIR] [-l LABEL] [-c CPU[,CPU...]] [-n]
 #
 # GROUP names one of the benchmark sets CI runs, each in a job of its own:
 #
@@ -35,6 +35,12 @@
 # so drift on the machine during the sitting lands on all three sets alike.
 # GOMAXPROCS is 1: above 256 KB the two stages of the parser run concurrently, and how
 # that race falls scatters far wider than any change worth catching.
+#
+# -c pins the runs to a CPU; given several, one worker runs on each, in parallel. The
+# unit of work is one variant of one round - its base, control and head binaries back
+# to back on one CPU - so whatever that CPU brings, its clock, its neighbours, lands on
+# all three sets alike, and the units are dealt out to the workers in turn. Give
+# physical cores, not SMT siblings, and see benchmarks/README.md for how many.
 #
 # -n skips perfgate's verdict from the exit status (report only), for calibration runs.
 set -euo pipefail
@@ -96,23 +102,21 @@ out=$(cd "$out" && pwd)
 cleanup() {
 	git -C "$repo" worktree remove --force "$work/base" >/dev/null 2>&1 || true
 	git -C "$repo" worktree remove --force "$work/head" >/dev/null 2>&1 || true
-	rm -rf "$work/base" "$work/head" "$work/bin"
+	rm -rf "$work/base" "$work/head" "$work/bin" "$work/pad" "$work"/w*.txt
+	# Gone unless the output was left inside it.
+	rmdir "$work" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-run=()
-if [ -n "$cpu" ]; then
-	run=(taskset -c "$cpu")
-fi
-
-# pad writes the padding package into tree $1 so that it is $2 bytes long, and the test
-# file that pulls it in. The package path follows the tree's own module path, which
+# pad writes, under directory $3, the padding package for a tree whose module is $1 so
+# that it is $2 bytes long, the test file that pulls it in, and an overlay that adds
+# both to the tree at $4 for go test -c - so that several variants can be built at
+# once from one tree. The package path follows the tree's own module path, which
 # changes across history.
 pad() {
-	local tree=$1 bytes=$2 module
-	module=$(cd "$tree" && go list -m)
-	mkdir -p "$tree/internal/zzlayoutpad"
-	cat >"$tree/internal/zzlayoutpad/pad.go" <<EOF
+	local module=$1 bytes=$2 dir=$3 tree=$4
+	mkdir -p "$dir"
+	cat >"$dir/pad.go" <<EOF
 // Package zzlayoutpad moves the code and data after it; see benchmarks/perfgate/ab.sh.
 package zzlayoutpad
 
@@ -135,11 +139,18 @@ EOF
 			echo '	QUAD $0x9090909090909090'
 		done
 		echo '	RET'
-	} >"$tree/internal/zzlayoutpad/pad_amd64.s"
-	cat >"$tree/zz_layout_pad_test.go" <<EOF
+	} >"$dir/pad_amd64.s"
+	cat >"$dir/zz_layout_pad_test.go" <<EOF
 package simdjson
 
 import _ "$module/internal/zzlayoutpad"
+EOF
+	cat >"$dir/overlay.json" <<EOF
+{"Replace": {
+	"$tree/internal/zzlayoutpad/pad.go": "$dir/pad.go",
+	"$tree/internal/zzlayoutpad/pad_amd64.s": "$dir/pad_amd64.s",
+	"$tree/zz_layout_pad_test.go": "$dir/zz_layout_pad_test.go"
+}}
 EOF
 }
 
@@ -148,11 +159,16 @@ EOF
 # through the page - which is where the data tables' cache sets come from.
 step=1056
 mkdir -p "$work/bin"
+pids=()
 for side in base head; do
 	rev=$base
 	[ $side = head ] && rev=$head
 	git -C "$repo" worktree add --detach "$work/$side" "$rev" >/dev/null
 	commit=$(git -C "$work/$side" rev-parse HEAD)
+	module=$(cd "$work/$side" && go list -m)
+	# The overlay supplies the padding package's files, but the assembler still runs
+	# in the package's directory, so that has to exist.
+	mkdir -p "$work/$side/internal/zzlayoutpad"
 	groups=$side
 	[ $side = base ] && groups="base control"
 	for group in $groups; do
@@ -163,8 +179,15 @@ for side in base head; do
 			control) slot=$((variants + i)) ;;
 			head) slot=$((2 * variants + i)) ;;
 			esac
-			pad "$work/$side" $((slot * step))
-			(cd "$work/$side" && CGO_ENABLED=0 go test -c -o "$work/bin/$group.$i" .)
+			pad "$module" $((slot * step)) "$work/pad/$group.$i" "$work/$side"
+			(cd "$work/$side" && CGO_ENABLED=0 go test -c \
+				-overlay "$work/pad/$group.$i/overlay.json" -o "$work/bin/$group.$i" .) &
+			pids+=($!)
+			# go test -c is parallel inside already; four at a time keeps the machine busy.
+			if [ ${#pids[@]} -ge 4 ]; then
+				wait "${pids[0]}"
+				pids=("${pids[@]:1}")
+			fi
 		done
 		# perfgate reads these as file configuration.
 		{
@@ -172,25 +195,68 @@ for side in base head; do
 			echo "goversion: $(go env GOVERSION)"
 		} >"$out/$group.txt"
 	done
-	rm -rf "$work/$side/internal/zzlayoutpad" "$work/$side/zz_layout_pad_test.go"
+done
+for pid in "${pids[@]}"; do
+	wait "$pid"
 done
 
-echo "measuring $label: $variants variants x $rounds rounds, benchtime $benchtime"
-groups=(base control head)
-for round in $(seq 1 "$rounds"); do
-	for i in $(seq 1 "$variants"); do
-		for k in 0 1 2; do
-			group=${groups[$(((round + i + k) % 3))]}
-			# Test binaries find testdata relative to the package directory.
-			dir=$work/base
-			[ "$group" = head ] && dir=$work/head
-			echo "variant: $i" >>"$out/$group.txt"
-			(cd "$dir" && "${run[@]}" "$work/bin/$group.$i" -test.run '^$' \
-				-test.bench "$pattern" -test.benchtime "$benchtime" -test.cpu 1 \
-				>>"$out/$group.txt")
+cpus=()
+if [ -n "$cpu" ]; then
+	IFS=, read -r -a cpus <<<"$cpu"
+fi
+workers=${#cpus[@]}
+if [ "$workers" -eq 0 ]; then
+	workers=1
+fi
+
+# worker runs every unit dealt to worker $1, pinned to CPU $2 if there is one, into
+# files of its own.
+worker() {
+	local w=$1 cpu=$2 n=0 round i k group dir
+	local pin=()
+	if [ -n "$cpu" ]; then
+		pin=(taskset -c "$cpu")
+	fi
+	local groups=(base control head)
+	for round in $(seq 1 "$rounds"); do
+		for i in $(seq 1 "$variants"); do
+			if [ $((n % workers)) -eq "$w" ]; then
+				for k in 0 1 2; do
+					group=${groups[$(((round + i + k) % 3))]}
+					# Test binaries find testdata relative to the package directory.
+					dir=$work/base
+					[ "$group" = head ] && dir=$work/head
+					echo "variant: $i" >>"$work/w$w.$group.txt"
+					(cd "$dir" && "${pin[@]}" "$work/bin/$group.$i" -test.run '^$' \
+						-test.bench "$pattern" -test.benchtime "$benchtime" -test.cpu 1 \
+						>>"$work/w$w.$group.txt")
+				done
+			fi
+			n=$((n + 1))
 		done
 	done
-	echo "  round $round of $rounds done"
+}
+
+echo "measuring $label: $variants variants x $rounds rounds, benchtime $benchtime, $workers worker(s)"
+pids=()
+for ((w = 0; w < workers; w++)); do
+	worker "$w" "${cpus[$w]:-}" &
+	pids+=($!)
+done
+failed=0
+for pid in "${pids[@]}"; do
+	wait "$pid" || failed=1
+done
+if [ $failed -ne 0 ]; then
+	echo "ab.sh: a benchmark run failed" >&2
+	exit 2
+fi
+for group in base control head; do
+	for ((w = 0; w < workers; w++)); do
+		if [ -f "$work/w$w.$group.txt" ]; then
+			cat "$work/w$w.$group.txt" >>"$out/$group.txt"
+		fi
+	done
 done
 
 status=0

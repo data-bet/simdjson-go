@@ -133,6 +133,34 @@ The same comparison runs locally, on amd64:
 benchmarks/perfgate/ab.sh -g corpus -b master -h HEAD -c 2
 ```
 
+Given several CPUs, `-c` runs one worker on each. The unit of work is one layout of one
+round with its base, control and head runs back to back on one CPU, so a CPU's own
+clock and neighbours fall on all three alike. Give physical cores and leave their SMT
+siblings idle; leaving a core or two of each L3 complex to the rest of the system costs
+little. Give a count that divides `-v` x `-r`, or the last wave runs part empty.
+
+On a 16-core Ryzen AI MAX+ 395 (two L3 complexes, cores 0-7 and 8-15; the twelve
+workers on 1-6 and 9-14), A/A runs of the `read` and `corpus` groups gave:
+
+| workers | rounds | `read` takes | mean move with nothing changed, `read` | the same, `corpus` |
+|---|---|---|---|---|
+| 1 | 3 | 327 s | 0.66-0.90% | 0.15-0.23% |
+| 4 | 3 | 84 s | 0.73-0.95% | 0.39-0.42% |
+| 12 | 3 | 28 s | 0.93-1.11% | 0.52-0.64% |
+| 12 | 6 | 54 s | 0.69-0.70% | 0.38-0.44% |
+
+Twelve workers and twice the rounds are as quiet as one worker on `read` and twice as
+noisy on `corpus`, in a sixth of the time; and a real change measured both ways agreed
+to within a point on every benchmark that does not allocate (-20.2% and -19.9% geomean).
+The exceptions are the allocation-heavy rows, `IterRead/*/objects` with megabytes per
+operation, which share memory bandwidth and the collector's work with eleven
+neighbours and moved by 3-6% in either direction; their controls move with them. For a
+difference of a percent or less, measure on one worker.
+
+```sh
+benchmarks/perfgate/ab.sh -g read -b master -h HEAD -r 6 -c 1,2,3,4,5,6,9,10,11,12,13,14
+```
+
 Those thresholds were checked on the hosted runners before the gate went in: eight
 runs per group of a revision against itself gave 48 null comparisons with no false
 alarm and none inconclusive, the largest move with nothing changed being 1.9% on a
