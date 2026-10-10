@@ -86,3 +86,62 @@ constraints name; elsewhere it forwards to `encoding/json`. `sonic_native_test.g
 carries that constraint verbatim, and the sonic rows skip rather than report
 `encoding/json`'s numbers under sonic's name. A skipped sonic row means this build is
 outside it — check the toolchain version before concluding anything about sonic.
+
+## The performance gate in CI
+
+`perfgate/` is a different job from the rest of this directory: not simdjson against
+other libraries, but one revision of simdjson against another, to stop a change that
+makes the parser slower from being merged unnoticed. `.github/workflows/perf.yml` runs it
+on every pull request.
+
+A hosted runner is a different machine every time - another CPU model, sometimes with
+AVX-512 and sometimes without - so no number is ever stored and compared later.
+`perfgate/ab.sh` builds both revisions on the same runner and measures them side by side
+in one sitting:
+
+- three sets of test binaries, base, head, and base again as a **control**, each built
+  four times with the library's code and data tables at different addresses, half of
+  them starting a cache line 32 bytes later than the other half. Each set's time is the
+  average over its four layouts, not one layout's luck. This is not a fine point: on
+  the Zen 3 runners `IterRead`'s walk loop takes 32% longer in one half of a cache line
+  than in the other, and with three layouts a side the control came out 5% off base
+  on every run, by having two of the fast kind where base had one;
+- the runs interleaved over three rounds, so that drift during the sitting falls on all
+  three sets alike;
+- `GOMAXPROCS=1`, since above 256 KB the two stages race and how that falls scatters
+  more widely than any change worth catching.
+
+`perfgate compare` then judges medians. The control is base against itself, so it shows
+how far this runner moves a benchmark with nothing changed, and every threshold is
+raised to that: a benchmark fails if it is slower by more than 5% or by more than its
+control moved, whichever is larger, and significantly so (Mann-Whitney, p < 0.01); the
+group fails if its geomean is slower by more than 2% or by twice the control's geomean.
+When the control is so noisy that the geomean threshold would pass 5%, the verdict is
+*inconclusive*, not a failure. Allocations do not depend on the machine and are judged
+exactly - one more `allocs/op` fails - wherever base and control agree sample for
+sample.
+
+Three groups run as separate jobs: `corpus` (`BenchmarkParseCorpus`), `stage1`
+(`BenchmarkStage1` and `BenchmarkStage1AVX2`, so the AVX2 pipeline is measured even on an
+AVX-512 runner) and `read` (`BenchmarkIterRead`, `BenchmarkParseNDReuse` and the
+payloads). The report lands in the job summary, and the raw output is kept as an
+artifact.
+
+The same comparison runs locally, on amd64:
+
+```sh
+benchmarks/perfgate/ab.sh -g corpus -b master -h HEAD -c 2
+```
+
+Those thresholds were checked on the hosted runners before the gate went in: eight
+runs per group of a revision against itself gave 48 null comparisons with no false
+alarm and none inconclusive, the largest move with nothing changed being 1.9% on a
+corpus benchmark, 3.7% on stage 1, 5.3% on reading and 1.3% on a geomean; and four
+optimisations from the history, undone, were all caught - including one of about 2.5%
+on the corpus.
+
+`.github/workflows/perf-calibrate.yml` is how they were checked and how to check
+them again: it runs a revision against itself many times, where every regression
+reported is a false alarm, and undoes four optimisations from the history, which are
+regressions of known size the gate should catch. Rerun it after changing `perfgate`, the
+groups, or the runner image.

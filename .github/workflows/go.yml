@@ -65,3 +65,7 @@ jobs:
     - name: Vet benchmarks module
       working-directory: benchmarks
       run: go vet ./...
+
+    - name: Test the performance gate
+      working-directory: benchmarks
+      run: go test ./perfgate

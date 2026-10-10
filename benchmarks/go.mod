@@ -7,6 +7,7 @@ require (
 	github.com/bytedance/sonic v1.15.2
 	github.com/data-bet/simdjson-go v0.0.0-00010101000000-000000000000
 	github.com/klauspost/compress v1.19.1
+	golang.org/x/perf v0.0.0-20260709024250-82a0b07e230d
 )
 
 replace github.com/data-bet/simdjson-go => ../
@@ -19,7 +20,6 @@ require (
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	golang.org/x/arch v0.29.0 // indirect
-	golang.org/x/perf v0.0.0-20260709024250-82a0b07e230d // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )
 
