@@ -444,3 +444,29 @@ func ExampleArray_DeleteElems() {
 	//Found array
 	//Modified: {"Image":{"Animated":false,"Height":600,"IDs":[943,38793]},"Alt":"Image of city"}
 }
+
+// TestNextElementBytesCorruptTape holds NextElementBytes to an error on the two corrupt
+// tapes it used to mishandle: a NOP of zero, which it followed back to itself until the
+// stack ran out, and a container ending before it starts, which moved the object back.
+func TestNextElementBytesCorruptTape(t *testing.T) {
+	word := func(t Tag, v uint64) uint64 { return uint64(t)<<JSONTAGOFFSET | v }
+	for _, tt := range []struct {
+		name string
+		tape []uint64
+		want string
+	}{
+		{"nop of zero", []uint64{word(TagNop, 0), word(TagObjectEnd, 0)}, "invalid nop skip"},
+		{"element ending before it starts",
+			[]uint64{word(TagString, 0), 1, word(TagArrayStart, 0), word(TagArrayEnd, 2), word(TagObjectEnd, 0)},
+			"element has negative offset"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			o := Object{tape: ParsedJson{Tape: tt.tape, Message: []byte("k")}}
+			var dst Iter
+			_, _, err := o.NextElementBytes(&dst)
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("got error %v, want %q", err, tt.want)
+			}
+		})
+	}
+}

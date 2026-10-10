@@ -327,39 +327,47 @@ func (o *Object) NextElement(dst *Iter) (name string, t Type, err error) {
 // TypeNone with nil error will be returned if there are no more elements.
 // Contrary to NextElement this will not cause allocations.
 func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
-	if o.off >= len(o.tape.Tape) {
-		return nil, TypeNone, nil
-	}
 	// Advance must be string or end of object
-	v := o.tape.Tape[o.off]
-	switch Tag(v >> 56) {
-	case TagString:
-		// Read name:
-		// We want name and at least one value.
-		if o.off+2 >= len(o.tape.Tape) {
-			return nil, TypeNone, fmt.Errorf("parsing object element name: unexpected end of tape")
+	for {
+		if o.off >= len(o.tape.Tape) {
+			return nil, TypeNone, nil
 		}
-		length := o.tape.Tape[o.off+1]
-		offset := v & JSONVALUEMASK
-		// The inlinable form: a key name is read for every element of every object,
-		// which made the call itself worth removing.
-		var ok bool
-		if name, ok = o.tape.stringBytes(offset, length); !ok {
-			return nil, TypeNone, fmt.Errorf("parsing object element name: %w",
-				o.tape.stringOutsideArea(offset, length))
+		v := o.tape.Tape[o.off]
+		switch Tag(v >> 56) {
+		case TagString:
+			// Read name:
+			// We want name and at least one value.
+			if o.off+2 >= len(o.tape.Tape) {
+				return nil, TypeNone, fmt.Errorf("parsing object element name: unexpected end of tape")
+			}
+			length := o.tape.Tape[o.off+1]
+			offset := v & JSONVALUEMASK
+			// The inlinable form: a key name is read for every element of every object,
+			// which made the call itself worth removing.
+			var ok bool
+			if name, ok = o.tape.stringBytes(offset, length); !ok {
+				return nil, TypeNone, fmt.Errorf("parsing object element name: %w",
+					o.tape.stringOutsideArea(offset, length))
+			}
+			o.off += 2
+		case TagObjectEnd:
+			return nil, TypeNone, nil
+		case TagNop:
+			// A skip of zero would come back here forever.
+			skip := int(v & JSONVALUEMASK)
+			if skip <= 0 {
+				return nil, TypeNone, errors.New("invalid nop skip")
+			}
+			o.off += skip
+			continue
+		default:
+			return nil, TypeNone, fmt.Errorf("object: unexpected tag %c", byte(v>>56))
 		}
-		o.off += 2
-	case TagObjectEnd:
-		return nil, TypeNone, nil
-	case TagNop:
-		o.off += int(v & JSONVALUEMASK)
-		return o.NextElementBytes(dst)
-	default:
-		return nil, TypeNone, fmt.Errorf("object: unexpected tag %c", byte(v>>56))
+		break
 	}
 
 	// Read element type
-	v = o.tape.Tape[o.off]
+	v := o.tape.Tape[o.off]
 	// Move to value (if any)
 	o.off++
 
@@ -371,6 +379,10 @@ func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 	dst.calcNext(false)
 	elemSize := dst.addNext
 	dst.calcNext(true)
+	if elemSize < 0 {
+		// The element would end before it starts, and the object move back.
+		return nil, TypeNone, errors.New("element has negative offset")
+	}
 	if dst.off+elemSize > len(dst.tape.Tape) {
 		return nil, TypeNone, errors.New("element extends beyond tape")
 	}
