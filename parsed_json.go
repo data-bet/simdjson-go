@@ -298,36 +298,59 @@ func (i *Iter) Advance() Type {
 // and move into and out of arrays , objects and root elements.
 // This should only be used for strictly manual parsing.
 func (i *Iter) AdvanceInto() Tag {
-	i.off += i.addNext
+	// A walk over the tape calls this once per element and does little else, so its
+	// speed is set by how many fetch windows the front end needs per call, and every
+	// taken branch ends one. The common case - an in-bounds element that is not a NOP -
+	// is therefore one straight run with a single, well predicted branch on whether a
+	// value word follows; the end of the tape and NOPs go to the loop below it. That
+	// branch must stay a branch: computing addNext from the tag without one puts the
+	// tape load on the chain into the next call's offset, and measured slower.
+	off := i.off + i.addNext
+	if off < len(i.tape.Tape) {
+		v := i.tape.Tape[off]
+		if t := Tag(v >> 56); t != TagNop {
+			i.off = off + 1
+			i.t = t
+			i.cur = v & JSONVALUEMASK
+			if valueTags>>(t&63)&1 != 0 {
+				i.addNext = 1
+				return t
+			}
+			i.addNext = 0
+			return t
+		}
+	}
+	// The end of the tape, or NOP entries to skip.
+	i.off = off
 	for {
 		if i.off >= len(i.tape.Tape) {
 			i.addNext = 0
 			i.t = TagEnd
 			return TagEnd
 		}
-
 		v := i.tape.Tape[i.off]
 		i.t = Tag(v >> 56)
 		i.cur = v & JSONVALUEMASK
-		if i.t == TagNop {
-			if i.cur <= 0 {
-				i.moveToEnd()
-				return TagEnd
-			}
-			i.off += int(i.cur)
-			continue
+		if i.t != TagNop {
+			i.off++
+			break
 		}
-		i.off++
-		break
+		if i.cur <= 0 {
+			i.moveToEnd()
+			return TagEnd
+		}
+		i.off += int(i.cur)
 	}
 	i.calcNext(true)
-	if i.addNext < 0 {
-		// We can't send error, so end tape.
-		i.moveToEnd()
-		return TagEnd
-	}
 	return i.t
 }
+
+// valueTags has bit t&63 set for the tags followed by a value word on the tape. The
+// low six bits keep those four apart from every other tag. A byte that is no tag at
+// all can share them and be read as one; Deserialize rejects such bytes, and on a tape
+// built by hand the walk still stays inside the tape. Ruling them out here as well
+// measured 1-4% slower.
+const valueTags uint64 = 1<<(TagString&63) | 1<<(TagInteger&63) | 1<<(TagUint&63) | 1<<(TagFloat&63)
 
 func (i *Iter) moveToEnd() {
 	i.off = len(i.tape.Tape)
