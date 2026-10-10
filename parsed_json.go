@@ -266,8 +266,36 @@ type Iter struct {
 // Advance will read the type of the next element
 // and queues up the value on the same level.
 func (i *Iter) Advance() Type {
-	i.off += i.addNext
-
+	// The same shape as AdvanceInto, and for the same reason: the common case is one
+	// straight run, with the end of the tape and NOPs in the loop below it. Here a
+	// container is skipped whole, which is a second branch, taken only for containers.
+	off := i.off + i.addNext
+	if off < len(i.tape.Tape) {
+		v := i.tape.Tape[off]
+		if t := Tag(v >> 56); t != TagNop {
+			off++
+			i.off = off
+			i.t = t
+			i.cur = v & JSONVALUEMASK
+			if valueTags>>(t&63)&1 != 0 {
+				i.addNext = 1
+				return TagToType[t]
+			}
+			if t != TagObjectStart && t != TagArrayStart && t != TagRoot {
+				i.addNext = 0
+				return TagToType[t]
+			}
+			i.addNext = int(i.cur) - off
+			if i.addNext < 0 {
+				// We can't send error, so move to end.
+				i.moveToEnd()
+				return TypeNone
+			}
+			return TagToType[t]
+		}
+	}
+	// The end of the tape, or NOP entries to skip.
+	i.off = off
 	for {
 		if i.off >= len(i.tape.Tape) {
 			i.addNext = 0
