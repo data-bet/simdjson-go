@@ -1,0 +1,91 @@
+name: Performance
+
+# Measures a pull request against the branch it targets, on one runner, side by side,
+# and fails if it made the parser slower or made it allocate more. Nothing is compared
+# with a stored number: a hosted runner is a different machine each time. See
+# benchmarks/perfgate for how the comparison is made and judged.
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - '**.go'
+      - '**.s'
+      - '**.h'
+      - 'go.mod'
+      - 'go.sum'
+      - 'testdata/**'
+      - 'benchmarks/perfgate/**'
+      - '.github/workflows/perf.yml'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Revision to measure against'
+        required: true
+        default: 'master'
+      head:
+        description: 'Revision to measure'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  ab:
+    name: ab (${{ matrix.group }})
+    # Pinned, not -latest, so that a runner image change does not arrive unannounced in
+    # the middle of a series of measurements.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [ corpus, stage1, read ]
+    env:
+      CGO_ENABLED: 0
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 1.26.x
+        cache-dependency-path: |
+          go.sum
+          benchmarks/go.sum
+
+    # For a pull request, head is the merge commit the checkout is on, so what is
+    # measured is what master would become.
+    - name: Resolve revisions
+      id: rev
+      env:
+        BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
+        HEAD: ${{ inputs.head || 'HEAD' }}
+      # A branch name typed into the dispatch form exists here only as origin/<name>.
+      run: |
+        resolve() { git rev-parse --verify -q "$1^{commit}" || git rev-parse --verify "origin/$1^{commit}"; }
+        echo "base=$(resolve "$BASE")" >> "$GITHUB_OUTPUT"
+        echo "head=$(resolve "$HEAD")" >> "$GITHUB_OUTPUT"
+        grep -m1 'model name' /proc/cpuinfo
+        grep -o -m1 -w avx512f /proc/cpuinfo || echo "no avx512f"
+
+    - name: Measure
+      run: >
+        benchmarks/perfgate/ab.sh -g ${{ matrix.group }}
+        -b ${{ steps.rev.outputs.base }} -h ${{ steps.rev.outputs.head }}
+        -c 1 -o "$RUNNER_TEMP/perf"
+
+    - name: Keep the raw output
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: perf-${{ matrix.group }}
+        path: ${{ runner.temp }}/perf
+        if-no-files-found: ignore
