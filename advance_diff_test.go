@@ -56,6 +56,64 @@ func advanceReference(i *Iter) Type {
 	return TagToType[i.t]
 }
 
+func advanceIterReference(i, dst *Iter) (Type, error) {
+	i.off += i.addNext
+
+	// Get current value off tape.
+	for {
+		if i.off == len(i.tape.Tape) {
+			i.addNext = 0
+			i.t = TagEnd
+			return TypeNone, nil
+		}
+		if i.off > len(i.tape.Tape) {
+			return TypeNone, errors.New("offset bigger than tape")
+		}
+
+		v := i.tape.Tape[i.off]
+		i.cur = v & JSONVALUEMASK
+		i.t = Tag(v >> 56)
+		i.off++
+		if i.t == TagNop {
+			if i.cur <= 0 {
+				return TypeNone, errors.New("invalid nop skip")
+			}
+			i.off += int(i.cur)
+			continue
+		}
+		break
+	}
+	i.calcNext(false)
+	if i.addNext < 0 {
+		i.moveToEnd()
+		return TypeNone, errors.New("element has negative offset")
+	}
+
+	// Calculate end of this object.
+	iEnd := i.off + i.addNext
+	typ := TagToType[i.t]
+
+	// Copy i if different
+	if i != dst {
+		*dst = *i
+	}
+	// Move into dst
+	dst.calcNext(true)
+	if dst.addNext < 0 {
+		i.moveToEnd()
+		return TypeNone, errors.New("element has negative offset")
+	}
+
+	if iEnd > len(dst.tape.Tape) {
+		return TypeNone, errors.New("element extends beyond tape")
+	}
+
+	// Restrict destination.
+	dst.tape.Tape = dst.tape.Tape[:iEnd]
+
+	return typ, nil
+}
+
 func nextElementBytesReference(o *Object, dst *Iter) (name []byte, t Type, err error) {
 	// Advance must be string or end of object
 	for {
@@ -295,6 +353,50 @@ func TestAdvanceMatchesReference(t *testing.T) {
 				}
 				if gt == TypeNone && got.t == TagEnd {
 					break
+				}
+			}
+		}
+	}
+}
+
+func TestAdvanceIterMatchesReference(t *testing.T) {
+	if !SupportedCPU() {
+		t.SkipNow()
+	}
+	for _, dt := range diffTapes(t) {
+		for _, start := range dt.starts {
+			for _, self := range []bool{false, true} {
+				got, want := dt.pj.Iter(), dt.pj.Iter()
+				got.off, want.off = start, start
+				var gotDst, wantDst Iter
+				gd, wd := &gotDst, &wantDst
+				if self {
+					gd, wd = &got, &want
+				}
+				for step := 0; step < stepsPerStart; step++ {
+					var gt, wt Type
+					var ge, we error
+					gp := panics(func() { gt, ge = got.AdvanceIter(gd) })
+					wp := panics(func() { wt, we = advanceIterReference(&want, wd) })
+					where := fmt.Sprintf("%s from %d (into itself %v), step %d", dt.name, start, self, step)
+					if gp != wp {
+						t.Fatalf("%s: panicked %v, want %v", where, gp, wp)
+					}
+					if gp {
+						break
+					}
+					if gt != wt || !sameErr(ge, we) {
+						t.Fatalf("%s: %v, %v, want %v, %v", where, gt, ge, wt, we)
+					}
+					if diff := sameIter(&got, &want); diff != "" {
+						t.Fatalf("%s: the Iter: %s", where, diff)
+					}
+					if diff := sameIter(gd, wd); diff != "" {
+						t.Fatalf("%s: dst: %s", where, diff)
+					}
+					if ge != nil || gt == TypeNone {
+						break
+					}
 				}
 			}
 		}

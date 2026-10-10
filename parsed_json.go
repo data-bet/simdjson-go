@@ -413,10 +413,8 @@ func (i *Iter) Type() Type {
 	return TagToType[i.t]
 }
 
-// AdvanceIter will read the type of the next element
-// and return an iterator only containing the object.
-// If dst and i are the same, both will contain the value inside.
-func (i *Iter) AdvanceIter(dst *Iter) (Type, error) {
+// advanceIter is AdvanceIter for every case.
+func (i *Iter) advanceIter(dst *Iter) (Type, error) {
 	i.off += i.addNext
 
 	// Get current value off tape.
@@ -472,6 +470,45 @@ func (i *Iter) AdvanceIter(dst *Iter) (Type, error) {
 	dst.tape.Tape = dst.tape.Tape[:iEnd]
 
 	return typ, nil
+}
+
+// AdvanceIter will read the type of the next element
+// and return an iterator only containing the object.
+// If dst and i are the same, both will contain the value inside.
+func (i *Iter) AdvanceIter(dst *Iter) (Type, error) {
+	// The common case - an element that is not a NOP and ends within the tape - is one
+	// straight run, as in AdvanceInto, with no switch on the tag: a branch on whether a
+	// value word follows, and one on whether it is a container, taken only for one.
+	// Everything else, every error included, is left to advanceIter, from the start.
+	off := i.off + i.addNext
+	if off < len(i.tape.Tape) {
+		v := i.tape.Tape[off]
+		if t := Tag(v >> 56); t != TagNop {
+			off++
+			cur := v & JSONVALUEMASK
+			next, into := 0, 0
+			if valueTags>>(t&63)&1 != 0 {
+				next, into = 1, 1
+			} else if t == TagObjectStart || t == TagArrayStart || t == TagRoot {
+				next = int(cur) - off
+			}
+			if end := off + next; next >= 0 && end <= len(i.tape.Tape) {
+				// Not *dst = *i: that reads i's fields back right after they were
+				// written, in wider loads than the stores, which the store queue cannot
+				// forward - and the load waits for the stores to reach the cache. It
+				// was half the time this function took.
+				if i != dst {
+					dst.tape = i.tape
+				}
+				tape := i.tape.Tape
+				i.off, i.t, i.cur, i.addNext = off, t, cur, next
+				dst.off, dst.t, dst.cur, dst.addNext = off, t, cur, into
+				dst.tape.Tape = tape[:end]
+				return TagToType[t], nil
+			}
+		}
+	}
+	return i.advanceIter(dst)
 }
 
 // PeekNext will return the next value type.
