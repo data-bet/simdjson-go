@@ -27,6 +27,8 @@ import "testing"
 //	walk    descend everything, convert nothing. The floor.
 //	typed   the same, pulling every leaf out as its Go type. A decoder into structs.
 //	objects the same again through Object, so key names are read as well.
+//	iters   descend everything with AdvanceIter, every element an Iter of its own,
+//	        the way ForEach and Array's helpers read.
 var readCorpus = []string{"apache_builds", "github_events", "citm_catalog", "twitter",
 	"update-center", "canada", "instruments"}
 
@@ -133,6 +135,42 @@ func walkObjects(tb testing.TB, pj *ParsedJson, keep *[]Iter) int {
 	return n
 }
 
+func walkIters(tb testing.TB, pj *ParsedJson, keep *[]Iter) int {
+	tb.Helper()
+	n := 0
+	var elem Iter
+	var stack []Iter
+	if keep != nil {
+		stack = (*keep)[:0]
+		defer func() { *keep = stack[:0] }()
+	}
+	stack = append(stack, pj.Iter())
+	for len(stack) > 0 {
+		typ, err := stack[len(stack)-1].AdvanceIter(&elem)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		switch typ {
+		case TypeNone:
+			stack = stack[:len(stack)-1]
+		case TypeRoot:
+			// Step onto the document's value, as ForEach does: walked on from the
+			// root, AdvanceIter would reach the closing root entry, which points back.
+			if t := elem.AdvanceInto(); t == TagObjectStart || t == TagArrayStart {
+				stack = append(stack, elem)
+			} else {
+				n++
+			}
+		case TypeObject, TypeArray:
+			// elem stands on the container's first entry, ready to walk it.
+			stack = append(stack, elem)
+		default:
+			n++
+		}
+	}
+	return n
+}
+
 func loadParsed(tb testing.TB, name string) *ParsedJson {
 	tb.Helper()
 	pj, err := Parse(loadCompressed(tb, name), nil)
@@ -175,6 +213,10 @@ func TestReadWalksEverything(t *testing.T) {
 			if got := walkObjects(t, pj, nil); got == 0 && name != "canada" {
 				t.Error("the object walk read no key names at all")
 			}
+			// Keys are strings to it, so it sees more than the leaves; never fewer.
+			if got := walkIters(t, pj, nil); got < want {
+				t.Errorf("the AdvanceIter walk read %d values, fewer than the %d leaves on the tape", got, want)
+			}
 		})
 	}
 }
@@ -210,6 +252,14 @@ func BenchmarkIterRead(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				walkObjects(b, pj, &stack)
+			}
+		})
+		b.Run(name+"/iters", func(b *testing.B) {
+			b.SetBytes(size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				walkIters(b, pj, &stack)
 			}
 		})
 	}
