@@ -125,7 +125,7 @@ var forEachWrites = []forEachWrite{
 	{"over the NOPs ahead", 1, func(i Iter) dirty {
 		// The first NOP after the element changes to the word at the end of its NOP
 		// run. Then tape[p] is equal to the word that Advance read, but Advance read
-		// more than one word. Advance starts its skip at the word after a NOP.
+		// more than one word.
 		p := i.off + i.addNext
 		q := p
 		for q < len(i.tape.Tape) && Tag(i.tape.Tape[q]>>56) == TagNop {
@@ -133,7 +133,7 @@ var forEachWrites = []forEachWrite{
 			if skip <= 0 {
 				return dirty{}
 			}
-			q += 1 + skip
+			q += skip
 		}
 		if q == p || q >= len(i.tape.Tape) {
 			return dirty{}

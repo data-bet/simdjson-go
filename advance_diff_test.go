@@ -26,6 +26,8 @@ import (
 // common case, in front of the code they had before. The references below are that
 // code, unchanged, and the tests walk both in lockstep over the corpus, over the corpus
 // cut short and with its containers pointing out of bounds, from every tag on the tape.
+// In advanceReference and advanceIterReference, a NOP skip starts at the NOP, as it
+// does in Advance and AdvanceIter after their correction.
 
 func advanceReference(i *Iter) Type {
 	i.off += i.addNext
@@ -39,13 +41,16 @@ func advanceReference(i *Iter) Type {
 
 		v := i.tape.Tape[i.off]
 		i.t = Tag(v >> 56)
-		i.off++
 		i.cur = v & JSONVALUEMASK
-		if i.t == TagNop {
-			i.off += int(i.cur)
-			continue
+		if i.t != TagNop {
+			i.off++
+			break
 		}
-		break
+		if i.cur == 0 {
+			i.moveToEnd()
+			return TypeNone
+		}
+		i.off += int(i.cur)
 	}
 	i.calcNext(false)
 	if i.addNext < 0 {
@@ -73,7 +78,6 @@ func advanceIterReference(i, dst *Iter) (Type, error) {
 		v := i.tape.Tape[i.off]
 		i.cur = v & JSONVALUEMASK
 		i.t = Tag(v >> 56)
-		i.off++
 		if i.t == TagNop {
 			if i.cur <= 0 {
 				return TypeNone, errors.New("invalid nop skip")
@@ -81,6 +85,7 @@ func advanceIterReference(i, dst *Iter) (Type, error) {
 			i.off += int(i.cur)
 			continue
 		}
+		i.off++
 		break
 	}
 	i.calcNext(false)

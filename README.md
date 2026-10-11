@@ -28,6 +28,10 @@ What differs from upstream `v0.4.5`:
   escapes with non-hex digits are rejected; and `ParseND` reuses the `ParsedJson` it is
   given. Some malformed documents that upstream accepted are therefore rejected now.
   On a corrupt tape `NextElementBytes` returns an error where it overflowed the stack.
+- After `DeleteElems`, `SetNull` or `Deserialize`, reading continues at the correct element.
+  In upstream, `Advance` and `AdvanceIter` skip one word too many after a NOP. Because of
+  this, `ForEach`, `Interface`, `FindKey` and the helpers of `Array` lose or misread
+  elements.
 - Platforms without the amd64 assembly get a portable implementation instead of an error,
   and `arm64` classifies with NEON - see [Requirements](#requirements).
 - Optional UTF-8 validation with `WithValidateUTF8(true)`.
