@@ -318,13 +318,19 @@ func (i *Iter) Advance() Type {
 
 		v := i.tape.Tape[i.off]
 		i.t = Tag(v >> 56)
-		i.off++
 		i.cur = v & JSONVALUEMASK
-		if i.t == TagNop {
-			i.off += int(i.cur)
-			continue
+		if i.t != TagNop {
+			i.off++
+			break
 		}
-		break
+		// The writers of NOPs count the skip from the NOP itself. A skip of 0 comes back
+		// to the same NOP. Advance cannot return an error, and it goes to the end, as
+		// AdvanceInto does.
+		if i.cur == 0 {
+			i.moveToEnd()
+			return TypeNone
+		}
+		i.off += int(i.cur)
 	}
 	i.calcNext(false)
 	if i.addNext < 0 {
@@ -459,14 +465,15 @@ func (i *Iter) advanceIter(dst *Iter) (Type, error) {
 		v := i.tape.Tape[i.off]
 		i.cur = v & JSONVALUEMASK
 		i.t = Tag(v >> 56)
-		i.off++
 		if i.t == TagNop {
 			if i.cur <= 0 {
 				return TypeNone, errors.New("invalid nop skip")
 			}
+			// The writers of NOPs count the skip from the NOP itself.
 			i.off += int(i.cur)
 			continue
 		}
+		i.off++
 		break
 	}
 	i.calcNext(false)
