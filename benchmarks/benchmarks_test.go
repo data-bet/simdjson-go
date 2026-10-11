@@ -53,9 +53,6 @@ func benchmarkEncodingJson(b *testing.B, filename string) {
 // character inside a string. BenchmarkMaterialise in samework_test.go is the row that
 // matches those semantics up; this one is here to be read next to its neighbour.
 func benchmarkSonic(b *testing.B, filename string) {
-	if !sonicIsNative {
-		b.Skip(sonicNotNative)
-	}
 	msg := loadCompressed(b, filename)
 
 	var parsed interface{}

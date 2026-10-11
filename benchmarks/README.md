@@ -79,14 +79,6 @@ does not make the allocation free.
 each library fills memory with nobody reclaiming it. Useful next to the default numbers,
 never instead of them.
 
-## sonic
-
-sonic has a native implementation only on the platforms and Go versions its own build
-constraints name; elsewhere it forwards to `encoding/json`. `sonic_native_test.go`
-carries that constraint verbatim, and the sonic rows skip rather than report
-`encoding/json`'s numbers under sonic's name. A skipped sonic row means this build is
-outside it — check the toolchain version before concluding anything about sonic.
-
 ## The performance gate in CI
 
 `perfgate/` is a different job from the rest of this directory: not simdjson against

@@ -133,7 +133,6 @@ var corpus = []string{
 // that a parallel run gives each goroutine its own.
 type materialiser struct {
 	name   string
-	needs  bool // requires sonic's native implementation
 	newRun func() func(msg []byte, str string) (interface{}, error)
 }
 
@@ -146,8 +145,7 @@ var materialisers = []materialiser{{
 		}
 	},
 }, {
-	name:  "sonic",
-	needs: true,
+	name: "sonic",
 	newRun: func() func([]byte, string) (interface{}, error) {
 		return func(msg []byte, _ string) (interface{}, error) {
 			var v interface{}
@@ -157,8 +155,7 @@ var materialisers = []materialiser{{
 }, {
 	// The same work as the row above, minus the copy of the whole payload that
 	// sonic.Unmarshal makes because its decoder takes a string.
-	name:  "sonic_str",
-	needs: true,
+	name: "sonic_str",
 	newRun: func() func([]byte, string) (interface{}, error) {
 		return func(_ []byte, str string) (interface{}, error) {
 			var v interface{}
@@ -188,9 +185,6 @@ func BenchmarkMaterialise(b *testing.B) {
 			str := string(msg)
 			for _, m := range materialisers {
 				b.Run("lib="+m.name, func(b *testing.B) {
-					if m.needs && !sonicIsNative {
-						b.Skip(sonicNotNative)
-					}
 					if !simdjson.SupportedCPU() && m.name == "simdjson" {
 						b.Skip("no SIMD support on this CPU")
 					}
@@ -259,7 +253,6 @@ type extractDoc struct {
 // nothing and wins.
 type extractor struct {
 	name   string
-	needs  bool
 	newRun func() func(msg []byte, str string) (int64, error)
 }
 
@@ -275,8 +268,7 @@ var extractors = []extractor{{
 		}
 	},
 }, {
-	name:  "sonic_struct",
-	needs: true,
+	name: "sonic_struct",
 	newRun: func() func([]byte, string) (int64, error) {
 		return func(_ []byte, str string) (int64, error) {
 			var doc extractDoc
@@ -292,8 +284,7 @@ var extractors = []extractor{{
 	// it answers, so a searcher that skipped without checking would be reading less
 	// JSON, not reading it faster. Two searchers because a Searcher carries its
 	// position; jsonparser below rescans from the start for the same reason.
-	name:  "sonic_ast",
-	needs: true,
+	name: "sonic_ast",
 	newRun: func() func([]byte, string) (int64, error) {
 		return func(_ []byte, str string) (int64, error) {
 			var sum int64
@@ -421,9 +412,6 @@ func BenchmarkExtract(b *testing.B) {
 	str := string(msg)
 	for _, e := range extractors {
 		b.Run("lib="+e.name, func(b *testing.B) {
-			if e.needs && !sonicIsNative {
-				b.Skip(sonicNotNative)
-			}
 			if !simdjson.SupportedCPU() && e.name == "simdjson" {
 				b.Skip("no SIMD support on this CPU")
 			}
@@ -454,10 +442,6 @@ func TestExtractAgree(t *testing.T) {
 	var want int64
 	var wantFrom string
 	for _, e := range extractors {
-		if e.needs && !sonicIsNative {
-			t.Logf("%s: skipped, %s", e.name, sonicNotNative)
-			continue
-		}
 		if !simdjson.SupportedCPU() && e.name == "simdjson" {
 			t.Logf("%s: skipped, no SIMD support on this CPU", e.name)
 			continue
