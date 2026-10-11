@@ -415,9 +415,9 @@ func TestNdjsonCountWhere2(t *testing.T) {
 // loadFile returns a test corpus, fetching and caching it when the repository does
 // not ship the file.
 //
-// The corpora too large to commit live on an external host, and it no longer serves
-// all of them - parking-citations-1M.json.zst and RC_2009-01.json.zst both answer
-// 404. A corpus that cannot be obtained skips the caller rather than failing it:
+// The corpora too large to commit live on an external host. The host moved them
+// below .old/, and the previous path answers 404. A corpus that cannot be obtained
+// skips the caller rather than failing it:
 // there is nothing wrong with the code under test, and a hard failure there made
 // `go test ./...` unusable. Anything else is still fatal.
 func loadFile(tb testing.TB, filename string) []byte {
@@ -441,7 +441,7 @@ func loadFile(tb testing.TB, filename string) []byte {
 			tb.Fatalf("opening %s: %v", filename, err)
 		}
 		fmt.Println("downloading file", filename)
-		resp, err := http.DefaultClient.Get("https://dl.minio.io/assets/" + filepath.Base(filename))
+		resp, err := http.DefaultClient.Get("https://dl.min.io/.old/assets/" + filepath.Base(filename))
 		if err != nil {
 			tb.Skipf("corpus %s could not be downloaded: %v", filename, err)
 		}
