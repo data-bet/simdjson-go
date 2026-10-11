@@ -150,6 +150,19 @@ func (pj *ParsedJson) Iter() Iter {
 	return Iter{tape: *pj}
 }
 
+// Iter.Object and Iter.Array write their tape one field at a time. A copy of all of the
+// tape reads these fields with loads that are larger than the stores. The store queue
+// cannot forward such a load, and the load waits until the stores are in the cache. A
+// returned Iter causes the same stall, because Go builds it in a temporary variable and
+// then copies all of it.
+func (pj *ParsedJson) iterInto(i *Iter) {
+	i.tape.Message = pj.Message
+	i.tape.Tape = pj.Tape
+	i.tape.Strings = pj.Strings
+	i.tape.internal = pj.internal
+	i.off, i.addNext, i.cur, i.t = 0, 0, 0, 0
+}
+
 // stringAt returns a string at a specific offset in the stringbuffer.
 func (pj *ParsedJson) stringAt(offset, length uint64) (string, error) {
 	b, err := pj.stringByteAt(offset, length)
@@ -379,6 +392,21 @@ func (i *Iter) AdvanceInto() Tag {
 // built by hand the walk still stays inside the tape. Ruling them out here as well
 // measured 1-4% slower.
 const valueTags uint64 = 1<<(TagString&63) | 1<<(TagInteger&63) | 1<<(TagUint&63) | 1<<(TagFloat&63)
+
+// Advance calculates the same addNext. The ForEach loops use this function because a
+// call to Advance costs more than the stall that these loops prevent.
+func addNextOf(t Tag, cur uint64, off int) (addNext int, ok bool) {
+	switch {
+	case TagToType[t] == TypeNone:
+		return 0, false
+	case valueTags>>(t&63)&1 != 0:
+		return 1, true
+	case t == TagObjectStart || t == TagArrayStart || t == TagRoot:
+		addNext = int(cur) - off
+		return addNext, addNext >= 0
+	}
+	return 0, true
+}
 
 func (i *Iter) moveToEnd() {
 	i.off = len(i.tape.Tape)

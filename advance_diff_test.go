@@ -319,6 +319,8 @@ func diffTapes(t *testing.T) []diffTape {
 		"key and no value":      {word(TagString, 0), 0, word(TagObjectEnd, 0)},
 		"key out of the area":   {word(TagString, 1<<40), 3, word(TagNull, 0), word(TagObjectEnd, 0)},
 		"nop in an object":      {word(TagNop, 1), word(TagString, 0), 0, word(TagNull, 0), word(TagObjectEnd, 0)},
+		"root as a value": {word(TagString, 0), 0, word(TagNull, 0),
+			word(TagString, 0), 0, word(TagRoot, 8), word(TagNull, 0), word(TagRoot, 5)},
 	}
 	for name, tape := range edges {
 		var starts []int

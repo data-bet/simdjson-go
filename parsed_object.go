@@ -138,9 +138,10 @@ func (o *Object) FindKey(key string, dst *Element) *Element {
 	}
 }
 
-// ForEach will call back fn for each key.
-// A key filter can be provided for optional filtering.
-func (o *Object) ForEach(fn func(key []byte, i Iter), onlyKeys map[string]struct{}) error {
+// forEachKey does not read the next member before fn. With a key filter, that read
+// continues to the next key in the filter. After the last key, it reads to the end of
+// the object, and this is not necessary.
+func (o *Object) forEachKey(fn func(key []byte, i Iter), onlyKeys map[string]struct{}) error {
 	tmp := o.tape.Iter()
 	tmp.off = o.off
 	n := 0
@@ -184,6 +185,65 @@ func (o *Object) ForEach(fn func(key []byte, i Iter), onlyKeys map[string]struct
 			return nil
 		}
 	}
+}
+
+func (i *Iter) advanceMember() (name []byte, ok bool, err error) {
+	typ := i.Advance()
+	if typ != TypeString || i.off+1 >= len(i.tape.Tape) {
+		if typ == TypeNone {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("object: unexpected name tag %v", i.t)
+	}
+	name, err = i.tape.stringByteAt(i.cur, i.tape.Tape[i.off])
+	if err != nil {
+		return nil, false, fmt.Errorf("getting object name: %w", err)
+	}
+	if i.Advance() == TypeNone {
+		return nil, false, nil
+	}
+	return name, true, nil
+}
+
+// ForEach will call back fn for each key.
+// A key filter can be provided for optional filtering.
+func (o *Object) ForEach(fn func(key []byte, i Iter), onlyKeys map[string]struct{}) error {
+	if len(onlyKeys) > 0 {
+		return o.forEachKey(fn, onlyKeys)
+	}
+	// The loop reads the next member before it calls fn, for the reason in
+	// Array.ForEach. The read below is the same as advanceMember, but without its two
+	// calls to Advance: these calls cost more than the stall. It reads three words, and
+	// the loop keeps the read only if fn did not change them. advanceMember does all
+	// other members, and the end of the object, after fn.
+	var tmp Iter
+	o.tape.iterInto(&tmp)
+	tmp.off = o.off
+	name, ok, err := tmp.advanceMember()
+	for ok {
+		e := tmp
+		p := tmp.off + tmp.addNext
+		tape := tmp.tape.Tape
+		if p+2 < len(tape) && Tag(tape[p]>>56) == TagString {
+			key, length, value := tape[p], tape[p+1], tape[p+2]
+			t, cur := Tag(value>>56), value&JSONVALUEMASK
+			if addNext, fast := addNextOf(t, cur, p+3); fast {
+				if next, inArea := tmp.tape.stringBytes(key&JSONVALUEMASK, length); inArea {
+					tmp.off, tmp.t, tmp.cur, tmp.addNext = p+3, t, cur, addNext
+					fn(name, e)
+					name = next
+					if tape[p] != key || tape[p+1] != length || tape[p+2] != value {
+						tmp = e
+						name, ok, err = tmp.advanceMember()
+					}
+					continue
+				}
+			}
+		}
+		fn(name, e)
+		name, ok, err = tmp.advanceMember()
+	}
+	return err
 }
 
 // DeleteElems will call back fn for each key.
