@@ -45,15 +45,45 @@ func (a *Array) Iter() Iter {
 
 // ForEach calls the provided function for every element.
 func (a *Array) ForEach(fn func(i Iter)) {
-	i := a.Iter()
-	for {
-		t := i.Advance()
-		if t == TypeNone {
-			break
-		}
-		fn(i)
+	// Each call to fn copies an Iter, because fn gets its Iter by value. A copy
+	// immediately after Advance reads the new fields with loads that are larger than the
+	// stores. The store queue cannot forward these loads, and they wait for the cache.
+	// On canada, this used approximately 30% of the time. For this reason, the loop
+	// reads the next element before it calls fn. fn gets a copy from before that read.
+	//
+	// The read below is the same as Advance for one word that is not a NOP. Because fn
+	// can write to the tape, the loop keeps the read only if fn did not change that
+	// word. Advance does all other elements, and the end of the array, after fn.
+	var i Iter
+	a.tape.iterInto(&i)
+	i.off = a.off
+	if i.Advance() == TypeNone {
+		return
 	}
-	return
+	for {
+		e := i
+		p := i.off + i.addNext
+		tape := i.tape.Tape
+		if p < len(tape) {
+			v := tape[p]
+			t, cur := Tag(v>>56), v&JSONVALUEMASK
+			if addNext, fast := addNextOf(t, cur, p+1); fast {
+				i.off, i.t, i.cur, i.addNext = p+1, t, cur, addNext
+				fn(e)
+				if tape[p] != v {
+					i = e
+					if i.Advance() == TypeNone {
+						return
+					}
+				}
+				continue
+			}
+		}
+		fn(e)
+		if i.Advance() == TypeNone {
+			return
+		}
+	}
 }
 
 // DeleteElems calls the provided function for every element.

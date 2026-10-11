@@ -29,6 +29,8 @@ import "testing"
 //	objects the same again through Object, so key names are read as well.
 //	iters   descend everything with AdvanceIter, every element an Iter of its own,
 //	        the way ForEach and Array's helpers read.
+//	foreach descend everything through the ForEach callbacks. Each call copies an
+//	        Iter, because ForEach gives each element by value.
 var readCorpus = []string{"apache_builds", "github_events", "citm_catalog", "twitter",
 	"update-center", "canada", "instruments"}
 
@@ -171,6 +173,44 @@ func walkIters(tb testing.TB, pj *ParsedJson, keep *[]Iter) int {
 	return n
 }
 
+// One Object and one Array are sufficient for all depths. ForEach copies its Object or
+// Array before the first call to fn, and does not use it after that.
+func walkForEach(tb testing.TB, pj *ParsedJson) int {
+	tb.Helper()
+	n := 0
+	var obj Object
+	var arr Array
+	var value func(i Iter)
+	value = func(i Iter) {
+		switch i.t {
+		case TagObjectStart:
+			o, err := i.Object(&obj)
+			if err != nil {
+				tb.Fatal(err)
+			}
+			err = o.ForEach(func(key []byte, i Iter) {
+				n += len(key)
+				value(i)
+			}, nil)
+			if err != nil {
+				tb.Fatal(err)
+			}
+		case TagArrayStart:
+			a, err := i.Array(&arr)
+			if err != nil {
+				tb.Fatal(err)
+			}
+			a.ForEach(value)
+		default:
+			n++
+		}
+	}
+	if err := pj.ForEach(func(i Iter) error { value(i); return nil }); err != nil {
+		tb.Fatal(err)
+	}
+	return n
+}
+
 func loadParsed(tb testing.TB, name string) *ParsedJson {
 	tb.Helper()
 	pj, err := Parse(loadCompressed(tb, name), nil)
@@ -217,6 +257,9 @@ func TestReadWalksEverything(t *testing.T) {
 			if got := walkIters(t, pj, nil); got < want {
 				t.Errorf("the AdvanceIter walk read %d values, fewer than the %d leaves on the tape", got, want)
 			}
+			if got := walkForEach(t, pj); got < want {
+				t.Errorf("the ForEach walk read %d values, fewer than the %d leaves on the tape", got, want)
+			}
 		})
 	}
 }
@@ -260,6 +303,14 @@ func BenchmarkIterRead(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				walkIters(b, pj, &stack)
+			}
+		})
+		b.Run(name+"/foreach", func(b *testing.B) {
+			b.SetBytes(size)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				walkForEach(b, pj)
 			}
 		})
 	}
