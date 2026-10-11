@@ -1,4 +1,4 @@
-//go:build (!amd64 && !arm64) || go1.27 || !go1.17 || (arm64 && !go1.20)
+//go:build (!amd64 && !arm64) || go1.28 || !go1.17 || (arm64 && !go1.20)
 
 /*
  * Copyright (c) 2026 DATA.BET
