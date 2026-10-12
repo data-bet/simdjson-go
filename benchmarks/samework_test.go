@@ -423,13 +423,15 @@ var extractors = []extractor{{
 	// sonic's lazy reader. NewSearcher validates the parts it skips, which is why it
 	// is left at its default here: simdjson has walked the whole document by the time
 	// it answers, so a searcher that skipped without checking would be reading less
-	// JSON, not reading it faster. Two searchers because a Searcher carries its
-	// position; jsonparser below rescans from the start for the same reason.
+	// JSON, not reading it faster. GetByPath starts each search at the start of the
+	// document, so one searcher is sufficient for the two paths, and each path scans
+	// again from the start, as jsonparser below does.
 	name: "sonic_ast",
 	newRun: func() func([]byte, string) (int64, error) {
 		return func(_ []byte, str string) (int64, error) {
 			var sum int64
-			users, err := ast.NewSearcher(str).GetByPath("users")
+			searcher := ast.NewSearcher(str)
+			users, err := searcher.GetByPath("users")
 			if err != nil {
 				return 0, err
 			}
@@ -442,7 +444,7 @@ var extractors = []extractor{{
 			}); err != nil {
 				return 0, err
 			}
-			topics, err := ast.NewSearcher(str).GetByPath("topics", "topics")
+			topics, err := searcher.GetByPath("topics", "topics")
 			if err != nil {
 				return 0, err
 			}
