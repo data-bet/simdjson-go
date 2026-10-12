@@ -41,7 +41,11 @@
 //     only with ValidateString, which ConfigStd also sets. ConfigDefault does not.
 //   - Validating UTF-8. simdjson does not unless WithValidateUTF8(true) is passed,
 //     and sonic never does. Left off on both sides, so this is matched by accident
-//     rather than by choice; turning it on for simdjson costs up to 19%.
+//     rather than by choice; turning it on for simdjson costs up to 19%. jsontext
+//     validates by default, so its row sets AllowInvalidUTF8(true).
+//   - Duplicate object names. jsontext rejects them by default, and to do that it
+//     records every name of every open object. No other library here checks for
+//     them, so the jsontext row sets AllowDuplicateNames(true).
 //   - Copying the input. sonic.Unmarshal([]byte) is UnmarshalFromString(string(buf)),
 //     which copies the whole payload on every call - 2.2 MB per operation on canada.
 //     Both are measured: "sonic" pays it, "sonic_str" is handed a string made once.
@@ -93,7 +97,10 @@
 package simdjson_benchmarks
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
+	"fmt"
 	"runtime"
 	"sync"
 	"testing"
@@ -256,6 +263,140 @@ type extractor struct {
 	newRun func() func(msg []byte, str string) (int64, error)
 }
 
+// jsontextOpts are the options of the jsontext row. The header comment of this file
+// gives the reason for each.
+var jsontextOpts = []jsontext.Options{
+	jsontext.AllowInvalidUTF8(true),
+	jsontext.AllowDuplicateNames(true),
+}
+
+// jsontextReader is the state that the jsontext row of BenchmarkExtract keeps between
+// calls. The decoder reads from a bytes.Buffer because that is the one reader it does
+// not copy into a buffer of its own.
+type jsontextReader struct {
+	dec jsontext.Decoder
+	in  bytes.Buffer
+	buf []byte
+}
+
+// str reads a string and returns it unescaped. The result is valid until the next
+// call.
+func (r *jsontextReader) str() ([]byte, error) {
+	v, err := r.dec.ReadValue()
+	if err != nil {
+		return nil, err
+	}
+	r.buf, err = jsontext.AppendUnquote(r.buf[:0], v)
+	return r.buf, err
+}
+
+// open reads the token that starts an object or an array.
+func (r *jsontextReader) open(kind jsontext.Kind) error {
+	tok, err := r.dec.ReadToken()
+	if err != nil {
+		return err
+	}
+	if tok.Kind() != kind {
+		return fmt.Errorf("jsontext: want %v, got %v", kind, tok.Kind())
+	}
+	return nil
+}
+
+// more reads the end token if the object or array has no more members. PeekKind
+// returns 0 on a syntax error, so the error comes from the next read instead.
+func (r *jsontextReader) more() (bool, error) {
+	if k := r.dec.PeekKind(); k != '}' && k != ']' {
+		return true, nil
+	}
+	_, err := r.dec.ReadToken()
+	return false, err
+}
+
+// object calls member with each name of an object. member must read the value.
+func (r *jsontextReader) object(member func(name []byte) error) error {
+	if err := r.open('{'); err != nil {
+		return err
+	}
+	for {
+		more, err := r.more()
+		if err != nil || !more {
+			return err
+		}
+		name, err := r.str()
+		if err != nil {
+			return err
+		}
+		if err = member(name); err != nil {
+			return err
+		}
+	}
+}
+
+// array calls elem once for each element of an array. elem must read the element.
+func (r *jsontextReader) array(elem func() error) error {
+	if err := r.open('['); err != nil {
+		return err
+	}
+	for {
+		more, err := r.more()
+		if err != nil || !more {
+			return err
+		}
+		if err = elem(); err != nil {
+			return err
+		}
+	}
+}
+
+func (r *jsontextReader) extract(msg []byte) (int64, error) {
+	r.in = *bytes.NewBuffer(msg)
+	r.dec.Reset(&r.in, jsontextOpts...)
+	var sum int64
+	strLen := func() error {
+		s, err := r.str()
+		sum += int64(len(s))
+		return err
+	}
+	err := r.object(func(name []byte) error {
+		switch string(name) {
+		case "users":
+			return r.array(func() error {
+				return r.object(func(name []byte) error {
+					if string(name) == "username" {
+						return strLen()
+					}
+					return r.dec.SkipValue()
+				})
+			})
+		case "topics":
+			return r.object(func(name []byte) error {
+				if string(name) != "topics" {
+					return r.dec.SkipValue()
+				}
+				return r.array(func() error {
+					return r.object(func(name []byte) error {
+						switch string(name) {
+						case "id":
+							tok, err := r.dec.ReadToken()
+							if err != nil {
+								return err
+							}
+							id, err := tok.Int()
+							sum += id
+							return err
+						case "slug":
+							return strLen()
+						}
+						return r.dec.SkipValue()
+					})
+				})
+			})
+		}
+		return r.dec.SkipValue()
+	})
+	return sum, err
+}
+
 var extractors = []extractor{{
 	name: "encoding_json",
 	newRun: func() func([]byte, string) (int64, error) {
@@ -317,6 +458,17 @@ var extractors = []extractor{{
 				return 0, err
 			}
 			return sum, nil
+		}
+	},
+}, {
+	// A streaming reader: it reads the document token by token and skips each value
+	// it does not need. SkipValue still checks the syntax of what it skips, as
+	// NewSearcher does for sonic_ast.
+	name: "jsontext",
+	newRun: func() func([]byte, string) (int64, error) {
+		r := &jsontextReader{}
+		return func(msg []byte, _ string) (int64, error) {
+			return r.extract(msg)
 		}
 	},
 }, {
