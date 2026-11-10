@@ -6,7 +6,7 @@ require (
 	github.com/buger/jsonparser v1.6.1
 	github.com/bytedance/sonic v1.15.4
 	github.com/data-bet/simdjson-go v0.0.0-00010101000000-000000000000
-	github.com/klauspost/compress v1.20.1
+	github.com/klauspost/compress v1.20.4
 	golang.org/x/perf v0.0.0-20261009192801-be2c69fb417e
 )
 
