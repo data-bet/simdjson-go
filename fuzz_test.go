@@ -305,6 +305,26 @@ func FuzzSerialize(f *testing.F) {
 		return
 	})
 }
+
+// FuzzParseNumber compares parseNumber with parseNumberRef, which gives each value to strconv.
+// The fast paths must give the same result for each input.
+func FuzzParseNumber(f *testing.F) {
+	for _, s := range []string{
+		"0", "-0", "-0.0", "-0e5", "1.5", "0.000123", "1e5", "1.5E-5", "-2.5e+300", "+1", "+1.5",
+		"1e", "1e+", "1ee5", "1.5e5.3", "1.2.3", "12345678901234567890", "0.12345678901234567890",
+		"9007199254740993.0", "1e400", "1e-400", "1e99999999999999999999",
+	} {
+		f.Add([]byte(s + ","))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		gotID, gotVal := parseNumber(data)
+		wantID, wantVal := parseNumberRef(data)
+		if gotID != wantID || gotVal != wantVal {
+			t.Fatalf("parseNumber(%q) = %#x, %#x; strconv path gives %#x, %#x", data, gotID, gotVal, wantID, wantVal)
+		}
+	})
+}
+
 func addBytesFromTarZst(f *testing.F, filename string, short bool) {
 	file, err := os.Open(filename)
 	if err != nil {
