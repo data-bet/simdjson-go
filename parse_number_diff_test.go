@@ -193,7 +193,7 @@ func TestParseNumberDiffTestdata(t *testing.T) {
 		t.SkipNow()
 	}
 	checked := 0
-	files := []string{"canada", "numbers", "mesh", "mesh.pretty", "marine_ik",
+	files := []string{"canada", "numbers", "mesh", "mesh.pretty", "marine_ik", "tiny-floats",
 		"citm_catalog", "random", "twitter", "github_events", "instruments", "apache_builds"}
 	for _, f := range files {
 		data := loadFile(t, "testdata/"+f+".json.zst")
