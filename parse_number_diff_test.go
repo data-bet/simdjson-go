@@ -22,6 +22,7 @@ import (
 	"math"
 	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -134,6 +135,135 @@ func TestParseNumberDiffCorpus(t *testing.T) {
 	t.Logf("fixed cases: %d comparisons", checked)
 }
 
+// TestParseNumberDiffFloatEdges pins the float scanner's boundaries: what it hands to strconv,
+// where it stops counting digits, and where the result leaves the float64 range.
+func TestParseNumberDiffFloatEdges(t *testing.T) {
+	checked := 0
+	fixed := []string{
+		// Malformed shapes the validation loop lets through.
+		"1e", "1E", "1e+", "1e-", "1ee5", "1eE5", "1e5e", "1e+-5", "1e-+5", "1e++5", "1.5e5.3",
+		"1.2.3", "1..5", "1.5.", "+1.5", "+1e5", "1+5", "1.5+", "1.5-5", "-1.5-", "e", "E", "e5",
+		"+e5", "-e5", ".e5", "1.e5", ".5e5", ".5", "-.5e1", "0.0.0", "0e", "-0e+", "1.5e+5+",
+		"0x1p5", "1_000.5",
+		// Exponents: case, explicit plus, integer-shaped mantissas, leading zeros.
+		"1e5", "1E5", "1e+5", "1E+05", "1e-5", "1E-05", "-1e5", "-1E-5", "12e3", "-12E+3",
+		"1.5e0", "1.5E-0", "1.5e+0", "0.5e1", "0.0e0", "0.0e999", "-0.0e-999", "00e5", "-00e5",
+		"1e0000000000000000000000005", "1e-0000000000000000000000005", "1.5e000",
+		// Exponent runs past what an int holds, and past strconv's saturation at 10000.
+		"1e99999999999999999999", "1e-99999999999999999999", "0e99999999999999999999",
+		"-0e-99999999999999999999", "1e10000", "1e-10000", "1e9999", "1e-9999", "1e100000",
+		"0.00000000000000000000000000000000000000000000000001e99999",
+		// Saturation decides the value only when the mantissa's own length offsets it.
+		"0." + strings.Repeat("0", 10000) + "1e10005", "0." + strings.Repeat("0", 10000) + "1e9999",
+		"-0." + strings.Repeat("0", 10000) + "1e100000000",
+		// Negative zero stays negative.
+		"-0.0", "-0e0", "-0E5", "-0.000e-5", "-0.0e999", "-0e-999",
+		// Range: overflow is rejected, underflow is a zero.
+		"1e308", "1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308",
+		"-1.7976931348623159e308", "2e308", "1e309", "1e310", "1e311", "9e310", "0.1e312",
+		"1e-999", "-1e-999", "1e-345", "1e-346", "1e-324", "1e-325", "5e-324", "-5e-324",
+		"2.4703282292062327e-324", "2.4703282292062328e-324", "4.9406564584124654e-324",
+		"2.2250738585072011e-308", "2.2250738585072012e-308", "2.2250738585072014e-308",
+		"4.4501477170144023e-308", "123456789012345678e-400", "9999999999999999999e-343",
+		"9999999999999999999e290", "1844674407370955161e290", "18446744073709551615e290",
+		// 19 against 20 significant digits, with and without leading zeros.
+		"1234567890123456789.5", "1.234567890123456789", "1.2345678901234567890",
+		"0.1234567890123456789", "0.12345678901234567890", "0.0000000000000000001234567890123456789",
+		"-0.00000000000000000012345678901234567891", "9999999999999999999.0", "99999999999999999999.0",
+		"9999999999999999999e0", "99999999999999999999e0", "0.9999999999999999999e19",
+		"1844674407370955161.5", "18446744073709551615.0", "18446744073709551616.0",
+		"000000000000000000000.5", "-000000000000000000000.5", "-0000000000000000000000000001",
+		"0." + strings.Repeat("0", 400) + "1", "0." + strings.Repeat("0", 400) + "1e400",
+		"-0." + strings.Repeat("0", 300) + "12345678901234567e310",
+		// Exact halfway points between two float64s, and one digit either side.
+		"9007199254740993.0", "9007199254740993e0", "9.007199254740993e15", "9007199254740992.9",
+		"9007199254740993.1", "4503599627370496.5", "4503599627370497.5", "2251799813685248.25",
+		"1125899906842624.125", "1125899906842624.1250000001", "18014398509481986e0",
+		"18014398509481990e0", "36028797018963972.0", "36028797018963980.0",
+		// Mantissas that atof64exact cannot take but whose exponent it could.
+		"9007199254740993e22", "9007199254740993e-22", "123456789012345678e37", "1e38", "1e-23",
+	}
+	for _, tok := range fixed {
+		diffOne(t, tok, &checked)
+	}
+	t.Logf("fixed cases: %d comparisons", checked)
+}
+
+// TestParseNumberDiffFloatShapes generates float tokens in the shapes JSON encoders write and in
+// the ones the scanner has to be careful with.
+func TestParseNumberDiffFloatShapes(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+	checked := 0
+	digits := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte('0' + r.Intn(10))
+		}
+		return string(b)
+	}
+	exponent := func() string {
+		return string("eE"[r.Intn(2)]) + []string{"", "+", "-"}[r.Intn(3)] + strconv.Itoa(r.Intn(400))
+	}
+	for range 20000 {
+		// Random float64 values in each notation, shortest and at 17 digits.
+		f := math.Float64frombits(r.Uint64())
+		if math.IsInf(f, 0) || math.IsNaN(f) {
+			f = r.NormFloat64()
+		}
+		g := r.NormFloat64() * math.Pow(10, float64(r.Intn(40)-20))
+		for _, v := range []float64{f, g} {
+			for _, notation := range []byte{'e', 'f', 'g'} {
+				diffOne(t, strconv.FormatFloat(v, notation, -1, 64), &checked)
+				diffOne(t, strings.ToUpper(strconv.FormatFloat(v, notation, 17, 64)), &checked)
+			}
+		}
+		// Integer-shaped mantissas with an exponent.
+		diffOne(t, digits(1+r.Intn(21))+exponent(), &checked)
+		// Leading-zero fractions, with and without an exponent.
+		lead := "0." + strings.Repeat("0", r.Intn(30)) + digits(1+r.Intn(21))
+		diffOne(t, lead, &checked)
+		diffOne(t, "-"+lead+exponent(), &checked)
+		// Exponent digit runs of any length.
+		diffOne(t, digits(1+r.Intn(5))+"."+digits(1+r.Intn(5))+"e"+strings.Repeat("0", r.Intn(30))+digits(1+r.Intn(25)), &checked)
+		// Exact halfway points between adjacent float64s: (2m+1) * 2^(k-1) near 2^(52+k).
+		m := 1<<52 + uint64(r.Int63n(1<<52))
+		k := r.Intn(4)
+		half := (2*m + 1) << k
+		diffOne(t, strconv.FormatUint(half, 10)+".0", &checked)
+		diffOne(t, strconv.FormatUint(half, 10)+"e-"+strconv.Itoa(r.Intn(3)), &checked)
+	}
+	t.Logf("generated cases: %d comparisons", checked)
+}
+
+// TestParseFloat64MatchesStrconv drives parseFloat64 directly, over every exponent its table
+// serves and past both ends, so that the whole range is covered rather than the part parseNumber
+// happens to reach.
+func TestParseFloat64MatchesStrconv(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	for p := -360; p <= 330; p++ {
+		for range 300 {
+			d := uint64(r.Int63n(math.MaxInt64))
+			switch r.Intn(3) {
+			case 0:
+				d %= uint64(math.Pow10(1 + r.Intn(18)))
+			case 1:
+				d = 1e19 - 1 - d%1000
+			}
+			neg := r.Intn(2) == 0
+			s := strconv.FormatUint(d, 10) + "e" + strconv.Itoa(p)
+			if neg {
+				s = "-" + s
+			}
+			want, err := strconv.ParseFloat(s, 64)
+			got, ok := parseFloat64(d, p, neg)
+			if ok != (err == nil) || math.Float64bits(got) != math.Float64bits(want) {
+				t.Fatalf("parseFloat64(%d, %d, %v) = %v (%#016x), %v; strconv.ParseFloat(%q) = %v (%#016x), %v",
+					d, p, neg, got, math.Float64bits(got), ok, s, want, math.Float64bits(want), err)
+			}
+		}
+	}
+}
+
 func TestParseNumberDiffGenerated(t *testing.T) {
 	if testing.Short() {
 		t.Skip("long")
@@ -193,7 +323,7 @@ func TestParseNumberDiffTestdata(t *testing.T) {
 		t.SkipNow()
 	}
 	checked := 0
-	files := []string{"canada", "numbers", "mesh", "mesh.pretty", "marine_ik",
+	files := []string{"canada", "numbers", "mesh", "mesh.pretty", "marine_ik", "tiny-floats",
 		"citm_catalog", "random", "twitter", "github_events", "instruments", "apache_builds"}
 	for _, f := range files {
 		data := loadFile(t, "testdata/"+f+".json.zst")

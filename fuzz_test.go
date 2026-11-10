@@ -28,6 +28,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -305,6 +306,50 @@ func FuzzSerialize(f *testing.F) {
 		return
 	})
 }
+
+// FuzzParseNumber checks parseNumber against parseNumberRef, which leaves every value to strconv:
+// the fast paths may only ever be faster, never different.
+func FuzzParseNumber(f *testing.F) {
+	for _, s := range []string{
+		"0", "-0", "-0.0", "-0e5", "1.5", "0.000123", "1e5", "1.5E-5", "-2.5e+300", "+1", "+1.5",
+		"1e", "1e+", "1ee5", "1.5e5.3", "1.2.3", "12345678901234567890", "0.12345678901234567890",
+		"9007199254740993.0", "1e400", "1e-400", "1e99999999999999999999",
+	} {
+		f.Add([]byte(s + ","))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		gotID, gotVal := parseNumber(data)
+		wantID, wantVal := parseNumberRef(data)
+		if gotID != wantID || gotVal != wantVal {
+			t.Fatalf("parseNumber(%q) = %#x, %#x; strconv path gives %#x, %#x", data, gotID, gotVal, wantID, wantVal)
+		}
+	})
+}
+
+// FuzzAppendFloat checks appendFloat against appendFloatRef, strconv's shortest form in the same
+// notation, for any bit pattern.
+func FuzzAppendFloat(f *testing.F) {
+	for _, v := range []float64{0, 1, 0.1, 123.456, 1e21, 1e-6, 1e-7, 5e-324, math.MaxFloat64, 1 << 53} {
+		f.Add(math.Float64bits(v))
+	}
+	f.Fuzz(func(t *testing.T, bits uint64) {
+		v := math.Float64frombits(bits)
+		got, err := appendFloat(nil, v)
+		if math.IsInf(v, 0) || math.IsNaN(v) {
+			if err == nil {
+				t.Fatalf("appendFloat(%#016x) = %q, want an error", bits, got)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("appendFloat(%#016x): %v", bits, err)
+		}
+		if want := appendFloatRef(nil, v); !bytes.Equal(got, want) {
+			t.Fatalf("appendFloat(%#016x) = %q, want %q", bits, got, want)
+		}
+	})
+}
+
 func addBytesFromTarZst(f *testing.F, filename string, short bool) {
 	file, err := os.Open(filename)
 	if err != nil {

@@ -1437,28 +1437,3 @@ func floatToString(f float64) (string, error) {
 	v, err := appendFloat(tmp[:0], f)
 	return string(v), err
 }
-
-// appendFloat converts a float to string similar to Go stdlib and appends it to dst.
-func appendFloat(dst []byte, f float64) ([]byte, error) {
-	if math.IsInf(f, 0) || math.IsNaN(f) {
-		return nil, errors.New("INF or NaN number found")
-	}
-
-	// Convert as if by ES6 number to string conversion.
-	// This matches most other JSON generators.
-	// See golang.org/issue/6384 and golang.org/issue/14135.
-	// Like fmt %g, but the exponent cutoffs are different
-	// and exponents themselves are not padded to two digits.
-	abs := math.Abs(f)
-	if (abs >= 1e-6 && abs < 1e21) || abs == 0 {
-		return appendFloatF(dst, f), nil
-	}
-	dst = strconv.AppendFloat(dst, f, 'e', -1, 64)
-	// clean up e-09 to e-9
-	n := len(dst)
-	if n >= 4 && dst[n-4] == 'e' && dst[n-3] == '-' && dst[n-2] == '0' {
-		dst[n-2] = dst[n-1]
-		dst = dst[:n-1]
-	}
-	return dst, nil
-}

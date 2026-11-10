@@ -106,6 +106,7 @@ func BenchmarkEncodingJsonMesh(b *testing.B)           { benchmarkEncodingJson(b
 func BenchmarkEncodingJsonMesh_pretty(b *testing.B)    { benchmarkEncodingJson(b, "mesh.pretty") }
 func BenchmarkEncodingJsonNumbers(b *testing.B)        { benchmarkEncodingJson(b, "numbers") }
 func BenchmarkEncodingJsonRandom(b *testing.B)         { benchmarkEncodingJson(b, "random") }
+func BenchmarkEncodingJsonTiny_floats(b *testing.B)    { benchmarkEncodingJson(b, "tiny-floats") }
 func BenchmarkEncodingJsonTwitter(b *testing.B)        { benchmarkEncodingJson(b, "twitter") }
 func BenchmarkEncodingJsonTwitterescaped(b *testing.B) { benchmarkEncodingJson(b, "twitterescaped") }
 func BenchmarkEncodingJsonUpdate_center(b *testing.B)  { benchmarkEncodingJson(b, "update-center") }
@@ -121,6 +122,7 @@ func BenchmarkSonicMesh(b *testing.B)           { benchmarkSonic(b, "mesh") }
 func BenchmarkSonicMesh_pretty(b *testing.B)    { benchmarkSonic(b, "mesh.pretty") }
 func BenchmarkSonicNumbers(b *testing.B)        { benchmarkSonic(b, "numbers") }
 func BenchmarkSonicRandom(b *testing.B)         { benchmarkSonic(b, "random") }
+func BenchmarkSonicTiny_floats(b *testing.B)    { benchmarkSonic(b, "tiny-floats") }
 func BenchmarkSonicTwitter(b *testing.B)        { benchmarkSonic(b, "twitter") }
 func BenchmarkSonicTwitterescaped(b *testing.B) { benchmarkSonic(b, "twitterescaped") }
 func BenchmarkSonicUpdate_center(b *testing.B)  { benchmarkSonic(b, "update-center") }
@@ -136,6 +138,7 @@ func BenchmarkSimdJsonMesh(b *testing.B)           { benchmarkSimdJson(b, "mesh"
 func BenchmarkSimdJsonMesh_pretty(b *testing.B)    { benchmarkSimdJson(b, "mesh.pretty") }
 func BenchmarkSimdJsonNumbers(b *testing.B)        { benchmarkSimdJson(b, "numbers") }
 func BenchmarkSimdJsonRandom(b *testing.B)         { benchmarkSimdJson(b, "random") }
+func BenchmarkSimdJsonTiny_floats(b *testing.B)    { benchmarkSimdJson(b, "tiny-floats") }
 func BenchmarkSimdJsonTwitter(b *testing.B)        { benchmarkSimdJson(b, "twitter") }
 func BenchmarkSimdJsonTwitterescaped(b *testing.B) { benchmarkSimdJson(b, "twitterescaped") }
 func BenchmarkSimdJsonUpdate_center(b *testing.B)  { benchmarkSimdJson(b, "update-center") }

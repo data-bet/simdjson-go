@@ -146,21 +146,21 @@ func foldEightDigits(w uint64) uint64 {
 	return w
 }
 
-// fastFloat folds the digits of a token with a decimal point, also reporting how
-// many there are and where the point falls among them, so that the value is
-// mant * 10^(dotAt-nd).
+// fastFloat folds the digits of a float token into mant, so that the token's value is
+// mant * 10^exp10. The caller passes the token alone, and only when it has at most 16 digits, so
+// mant cannot overflow.
 //
-// ok is false for the shapes it leaves to strconv: exponents, a second decimal
-// point and stray signs. Exponents are worth skipping because real JSON barely uses
-// them - under 0.3% of the numbers in any of the test corpora.
-func fastFloat(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
-	dotAt = -1
+// ok is false for the shapes it leaves to strconv: a second decimal point, stray signs and a
+// malformed exponent.
+func fastFloat(tok []byte) (mant uint64, exp10 int, ok bool) {
+	dotAt := -1
+	nd := 0
 	i := 0
-	if buf[0] == '-' {
+	if tok[0] == '-' {
 		i = 1
 	}
-	for ; i < len(buf); i++ {
-		c := buf[i]
+	for ; i < len(tok); i++ {
+		c := tok[i]
 		if d := c - '0'; d <= 9 {
 			mant = mant*10 + uint64(d)
 			nd++
@@ -172,40 +172,64 @@ func fastFloat(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
 		}
 		break
 	}
-	if i < len(buf) && isNumberRune[buf[i]] != isEOVFlag {
-		return 0, 0, 0, false
+	if dotAt >= 0 {
+		exp10 = dotAt - nd
 	}
-	return mant, dotAt, nd, true
+	if i < len(tok) {
+		e, ok := parseExponent(tok[i:])
+		if !ok || nd == 0 {
+			return 0, 0, false
+		}
+		exp10 += e
+	}
+	return mant, exp10, true
 }
 
-// fastFloatLong does the same for a mantissa long enough to be worth folding eight
-// digits at a time.
+// fastFloatLong does the same for a token long enough to be worth folding eight digits at a
+// time, and that can hold more digits than a uint64 does.
 //
-// It is a separate function rather than a flag on fastFloat because restructuring
-// that loop to accommodate both cost the files whose numbers are short 2-5%, even
-// with the wide fold switched off - the flat loop above is simply better code for
-// them. The caller picks this one when the mantissa is too long for atof64exact,
-// which is also where the multiply chain starts to dominate.
-func fastFloatLong(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
-	dotAt = -1
-	i := 0
-	if buf[0] == '-' {
-		i = 1
+// It is a separate function rather than a flag on fastFloat because restructuring that loop to
+// accommodate both cost the files whose numbers are short 2-5%, even with the wide fold switched
+// off - the flat loop above is simply better code for them.
+//
+// Leading zeros, on either side of the decimal point, are skipped before folding: they only move
+// the decimal point, and without them nd counts the significant digits, which are what has to
+// fit. Past 19 of those ok is false, and the token goes to strconv.
+func fastFloatLong(tok []byte) (mant uint64, exp10 int, ok bool) {
+	start := 0
+	if tok[0] == '-' {
+		start = 1
 	}
-	// Two passes round this loop at most: the digits before the decimal point, then
-	// the ones after it.
+	i := start
+	for i < len(tok) && tok[i] == '0' {
+		i++
+	}
+	dotAt := -1
+	if i < len(tok) && tok[i] == '.' {
+		dotAt = i
+		i++
+		for i < len(tok) && tok[i] == '0' {
+			i++
+		}
+	}
+	nd := 0
+	// Two passes round this loop at most: the digits before the decimal point, then the ones
+	// after it.
 	for {
-		for len(buf)-i >= 8 {
-			w := binary.LittleEndian.Uint64(buf[i:])
+		for len(tok)-i >= 8 {
+			w := binary.LittleEndian.Uint64(tok[i:])
 			if !eightDigitsASCII(w) {
 				break
 			}
 			mant = mant*100000000 + foldEightDigits(w)
 			nd += 8
 			i += 8
+			if nd > 19 {
+				return 0, 0, false
+			}
 		}
-		for i < len(buf) {
-			d := buf[i] - '0'
+		for i < len(tok) {
+			d := tok[i] - '0'
 			if d > 9 {
 				break
 			}
@@ -213,17 +237,59 @@ func fastFloatLong(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
 			nd++
 			i++
 		}
-		if i < len(buf) && buf[i] == '.' && dotAt < 0 {
-			dotAt = nd
+		if i < len(tok) && tok[i] == '.' && dotAt < 0 {
+			dotAt = i
 			i++
 			continue
 		}
 		break
 	}
-	if i < len(buf) && isNumberRune[buf[i]] != isEOVFlag {
-		return 0, 0, 0, false
+	if nd > 19 {
+		return 0, 0, false
 	}
-	return mant, dotAt, nd, true
+	if dotAt >= 0 {
+		exp10 = dotAt + 1 - i
+	}
+	if i < len(tok) {
+		digits := i - start - bool2[int](dotAt >= 0)
+		e, ok := parseExponent(tok[i:])
+		if !ok || digits == 0 {
+			return 0, 0, false
+		}
+		exp10 += e
+	}
+	return mant, exp10, true
+}
+
+// parseExponent reads an exponent marker and the exponent after it, which have to run to the end
+// of s. The value stops growing once it passes 10000, exactly as in strconv, so that both read the
+// same exponent from any run of digits and the arithmetic cannot overflow.
+func parseExponent(s []byte) (int, bool) {
+	if s[0]|0x20 != 'e' || len(s) < 2 {
+		return 0, false
+	}
+	i := 1
+	neg := s[1] == '-'
+	if neg || s[1] == '+' {
+		i = 2
+	}
+	if i == len(s) {
+		return 0, false
+	}
+	e := 0
+	for ; i < len(s); i++ {
+		d := s[i] - '0'
+		if d > 9 {
+			return 0, false
+		}
+		if e < 10000 {
+			e = e*10 + int(d)
+		}
+	}
+	if neg {
+		e = -e
+	}
+	return e, true
 }
 
 // parseNumber will parse the number starting in the buffer.
@@ -259,7 +325,7 @@ func parseNumber(buf []byte) (id, val uint64) {
 	// The digit count is derived rather than counted: every byte of the token is a
 	// digit except a leading minus and a decimal point. Anything else in there - a
 	// stray sign, an exponent - only makes this an over-estimate, which is safe,
-	// since fastNumber re-checks the shape and refuses what it cannot handle.
+	// since the fast paths re-check the shape and refuse what they cannot handle.
 	// Counting in the loop above instead cost more than the direct paths saved on
 	// tokens too long to use them.
 	nDigits := pos
@@ -323,27 +389,29 @@ func parseNumber(buf []byte) (id, val uint64) {
 		// Float can only have have a leading 0 when followed by a period.
 		return 0, 0
 	}
-	// 19 digits are the most a uint64 holds exactly, and up to that the digits folded
-	// above are all the conversion needs: float64 arithmetic while the scale keeps it
-	// exact, Eisel-Lemire beyond that. Longer tokens skip the second pass entirely and
-	// go straight to strconv, so they pay nothing for it.
-	if nDigits <= 19 {
+	// Up to 19 significant digits the folded mantissa is exact, and atof64exact or
+	// parseFloat64 round it correctly; strconv is left the tokens with more and the
+	// shapes the folds refuse. An integer-shaped token with more than 19 digits has
+	// more than 19 significant ones too, short of leading zeros after a minus, so it
+	// goes to strconv without a scan.
+	if found&isFloatOnlyFlag != 0 || nDigits <= 19 {
 		fold := fastFloat
 		if nDigits > 16 {
-			// Too long for atof64exact, so it is heading for Eisel-Lemire and the
-			// digit-at-a-time multiply chain is what would dominate.
+			// Long enough that the digit-at-a-time multiply chain would dominate, and
+			// too long to be sure that the digits fit.
 			fold = fastFloatLong
 		}
-		if mant, dotAt, nd, ok := fold(buf); ok && dotAt >= 0 {
-			exp10, neg := dotAt-nd, buf[0] == '-'
-			if f64, ok := atof64exact(mant, exp10, neg); ok {
-				return floatTag, math.Float64bits(f64)
+		if mant, exp10, ok := fold(buf[:pos]); ok {
+			neg := buf[0] == '-'
+			f64, ok := atof64exact(mant, exp10, neg)
+			if !ok {
+				f64, ok = parseFloat64(mant, exp10, neg)
 			}
-			if mant != 0 {
-				if f64, ok := eiselLemire64(mant, exp10, neg); ok {
-					return floatTag, math.Float64bits(f64)
-				}
+			if !ok {
+				// The value rounds to infinity, which strconv rejects with ErrRange.
+				return 0, 0
 			}
+			return floatTag, math.Float64bits(f64)
 		}
 	}
 	f64, err := strconv.ParseFloat(unsafeBytesToString(buf[:pos]), 64)

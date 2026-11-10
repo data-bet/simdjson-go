@@ -19,13 +19,12 @@ MinIO's, and the ones this fork changed say so in their leading comment.
 Portions of this software are derived from the Go standard library and are licensed
 under the BSD 3-Clause licence rather than Apache-2.0; see LICENSE-go:
 
-  atof_eisel_lemire.go       a re-implementation of strconv's eiselLemire64
-  detailed_powers_of_ten.go  the table strconv and ftoa share
-  ftoa_append.go             strconv's float formatter, cut down to 'f'
-  ftoa_ryu.go                strconv's Ryu implementation
+  ftoa_append.go  the float layout, with strconv's two-digit integer formatter
+  pow10tab.go     strconv's table of powers of ten
+  uscale.go       strconv's unrounded scaling, cut down to float64
 
 The parsing algorithms, and the amd64 assembly that implements them, follow simdjson
 (https://github.com/simdjson/simdjson) by Daniel Lemire, Geoff Langdale and
-contributors, licensed under the Apache License, Version 2.0. The number parser follows
-Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and
-Experience 51:8 (2021).
+contributors, licensed under the Apache License, Version 2.0. The conversion between
+float64 and decimal follows Russ Cox, "Floating-Point Printing and Parsing Can Be Simple
+And Fast", https://research.swtch.com/fp.
