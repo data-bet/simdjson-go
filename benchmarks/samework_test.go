@@ -50,7 +50,7 @@
 //     which copies the whole payload on every call - 2.2 MB per operation on canada.
 //     Both are measured: "sonic" pays it, "sonic_str" is handed a string made once.
 //   - Cores. simdjson runs stage 1 and stage 2 in separate goroutines once a message
-//     is over 256 KB, which is 10 of the 14 corpus files, while every other library
+//     is over 256 KB, which is 11 of the 15 corpus files, while every other library
 //     here is single-threaded. Sequential ns/op therefore compares one library's
 //     wall clock on two cores against another's on one. The "par" sub-benchmark is
 //     the answer: with every core already busy, overlapping the two stages buys
@@ -131,7 +131,7 @@ func keep(v interface{}) {
 // read against each other.
 var corpus = []string{
 	"apache_builds", "canada", "citm_catalog", "github_events", "gsoc-2018",
-	"instruments", "marine_ik", "mesh", "mesh.pretty", "numbers", "random",
+	"instruments", "marine_ik", "mesh", "mesh.pretty", "numbers", "random", "tiny-floats",
 	"twitter", "twitterescaped", "update-center",
 }
 

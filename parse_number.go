@@ -33,6 +33,7 @@ const (
 	isDigitFlag
 	isMustHaveDigitNext
 	isDotFlag
+	isExpFlag
 )
 
 var isNumberRune = [256]uint8{
@@ -49,8 +50,8 @@ var isNumberRune = [256]uint8{
 	'.':  isPartOfNumberFlag | isFloatOnlyFlag | isMustHaveDigitNext | isDotFlag,
 	'+':  isPartOfNumberFlag,
 	'-':  isPartOfNumberFlag | isMinusFlag | isMustHaveDigitNext,
-	'e':  isPartOfNumberFlag | isFloatOnlyFlag,
-	'E':  isPartOfNumberFlag | isFloatOnlyFlag,
+	'e':  isPartOfNumberFlag | isFloatOnlyFlag | isExpFlag,
+	'E':  isPartOfNumberFlag | isFloatOnlyFlag | isExpFlag,
 	',':  isEOVFlag,
 	'}':  isEOVFlag,
 	']':  isEOVFlag,
@@ -151,8 +152,7 @@ func foldEightDigits(w uint64) uint64 {
 // mant * 10^(dotAt-nd).
 //
 // ok is false for the shapes it leaves to strconv: exponents, a second decimal
-// point and stray signs. Exponents are worth skipping because real JSON barely uses
-// them - under 0.3% of the numbers in any of the test corpora.
+// point and stray signs. parseNumber does not send a token with an exponent here.
 func fastFloat(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
 	dotAt = -1
 	i := 0
@@ -224,6 +224,113 @@ func fastFloatLong(buf []byte) (mant uint64, dotAt, nd int, ok bool) {
 		return 0, 0, 0, false
 	}
 	return mant, dotAt, nd, true
+}
+
+// parseExponent reads an exponent marker and the exponent after it, which must continue
+// to the end of s. Above 10000 the value does not increase, as in strconv. Thus both
+// read the same exponent from any run of digits, and the sum cannot overflow.
+func parseExponent(s []byte) (int, bool) {
+	if len(s) < 2 || s[0]|0x20 != 'e' {
+		return 0, false
+	}
+	i := 1
+	neg := s[1] == '-'
+	if neg || s[1] == '+' {
+		i = 2
+	}
+	if i == len(s) {
+		return 0, false
+	}
+	e := 0
+	for ; i < len(s); i++ {
+		d := s[i] - '0'
+		if d > 9 {
+			return 0, false
+		}
+		if e < 10000 {
+			e = e*10 + int(d)
+		}
+	}
+	if neg {
+		e = -e
+	}
+	return e, true
+}
+
+// fastFloatGeneral folds a float token tok with at most 19 significant digits, so that
+// its value is mant * 10^exp10. Unlike fastFloat and fastFloatLong, it accepts an
+// exponent, and it does not count leading zeros as digits. ok is false for the shapes
+// that it leaves to strconv: more than 19 significant digits, a second decimal point,
+// stray signs and a malformed exponent.
+func fastFloatGeneral(tok []byte) (mant uint64, exp10 int, ok bool) {
+	start := 0
+	if tok[0] == '-' {
+		start = 1
+	}
+	// Leading zeros only move the decimal point. When the loop skips them, nd counts
+	// the significant digits, and only these digits must fit in mant.
+	i := start
+	for i < len(tok) && tok[i] == '0' {
+		i++
+	}
+	dotAt := -1
+	if i < len(tok) && tok[i] == '.' {
+		dotAt = i
+		i++
+		for i < len(tok) && tok[i] == '0' {
+			i++
+		}
+	}
+	nd := 0
+	// The loop runs at most two times: for the digits before the decimal point, then
+	// for the digits after it.
+	for {
+		for len(tok)-i >= 8 {
+			w := binary.LittleEndian.Uint64(tok[i:])
+			if !eightDigitsASCII(w) {
+				break
+			}
+			mant = mant*100000000 + foldEightDigits(w)
+			nd += 8
+			i += 8
+			if nd > 19 {
+				return 0, 0, false
+			}
+		}
+		for i < len(tok) {
+			d := tok[i] - '0'
+			if d > 9 {
+				break
+			}
+			mant = mant*10 + uint64(d)
+			nd++
+			i++
+		}
+		if i < len(tok) && tok[i] == '.' && dotAt < 0 {
+			dotAt = i
+			i++
+			continue
+		}
+		break
+	}
+	if nd > 19 {
+		return 0, 0, false
+	}
+	if dotAt >= 0 {
+		exp10 = dotAt + 1 - i
+	}
+	if i < len(tok) {
+		digits := i - start
+		if dotAt >= 0 {
+			digits--
+		}
+		e, ok := parseExponent(tok[i:])
+		if !ok || digits == 0 {
+			return 0, 0, false
+		}
+		exp10 += e
+	}
+	return mant, exp10, true
 }
 
 // parseNumber will parse the number starting in the buffer.
@@ -323,11 +430,31 @@ func parseNumber(buf []byte) (id, val uint64) {
 		// Float can only have have a leading 0 when followed by a period.
 		return 0, 0
 	}
-	// 19 digits are the most a uint64 holds exactly, and up to that the digits folded
-	// above are all the conversion needs: float64 arithmetic while the scale keeps it
-	// exact, Eisel-Lemire beyond that. Longer tokens skip the second pass entirely and
-	// go straight to strconv, so they pay nothing for it.
-	if nDigits <= 19 {
+	// fastFloatGeneral takes the tokens with an exponent. It also takes the decimals
+	// with more than 19 digits, because without leading zeros they can have 19
+	// significant digits or fewer. The other tokens keep fastFloat and fastFloatLong:
+	// when one loop with exponent support took them too, numbers and mesh parsed 2-5%
+	// slower on amd64.
+	if found&isExpFlag != 0 || (nDigits > 19 && found&isDotFlag != 0) {
+		// This conversion repeats the one below. A shared function does not inline, and
+		// with its call numbers and mesh parsed 3% slower.
+		if mant, exp10, ok := fastFloatGeneral(buf[:pos]); ok {
+			neg := buf[0] == '-'
+			if f64, ok := atof64exact(mant, exp10, neg); ok {
+				return floatTag, math.Float64bits(f64)
+			}
+			if mant != 0 {
+				if f64, ok := eiselLemire64(mant, exp10, neg); ok {
+					return floatTag, math.Float64bits(f64)
+				}
+			}
+		}
+	} else if nDigits <= 19 {
+		// 19 digits are the most a uint64 holds exactly, and up to that the digits
+		// folded above are all the conversion needs: float64 arithmetic while the
+		// scale keeps it exact, Eisel-Lemire beyond that. Longer integer tokens skip
+		// the second pass entirely and go straight to strconv, so they pay nothing
+		// for it.
 		fold := fastFloat
 		if nDigits > 16 {
 			// Too long for atof64exact, so it is heading for Eisel-Lemire and the

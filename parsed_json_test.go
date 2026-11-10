@@ -89,6 +89,9 @@ var testCases = []struct {
 		name: "mesh.pretty",
 	},
 	{
+		name: "tiny-floats",
+	},
+	{
 		name: "twitterescaped",
 	},
 	{
